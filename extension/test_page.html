@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Defendra Monitor Test Page</title>
+    <style>
+      .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;z-index:999999}
+    </style>
+  </head>
+  <body>
+    <h1>Test Page for Defendra Browser Monitor</h1>
+    <p>Use buttons to simulate suspicious behaviours.</p>
+    <button id="overlay">Insert large overlay</button>
+    <button id="password">Insert password field</button>
+    <button id="text">Insert suspicious text</button>
+
+    <script>
+      document.getElementById('overlay').addEventListener('click', ()=>{
+        const o = document.createElement('div');
+        o.className='overlay';
+        o.textContent='Update your browser to continue (simulated)';
+        document.body.appendChild(o);
+      });
+      document.getElementById('password').addEventListener('click', ()=>{
+        const f = document.createElement('form');
+        f.innerHTML = '<input type="password" placeholder="Enter password">';
+        document.body.appendChild(f);
+      });
+      document.getElementById('text').addEventListener('click', ()=>{
+        const p = document.createElement('div');
+        p.textContent = 'Click allow to continue — install the extension';
+        document.body.appendChild(p);
+      });
+    </script>
+  </body>
+</html>

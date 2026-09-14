@@ -1,0 +1,14 @@
+[Unit]
+Description=Defendra.AI API
+After=network.target mysql.service
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/crps/backend
+EnvironmentFile=/opt/crps/backend/.env
+ExecStart=/opt/crps/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

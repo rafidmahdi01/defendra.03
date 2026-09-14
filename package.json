@@ -1,0 +1,44 @@
+{
+  "name": "cyber-resilience-protection-system",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/electron.js",
+  "scripts": {
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "electron:dev": "cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .",
+    "electron:build": "npm run frontend:build && electron-builder",
+    "backend:dev": "cd backend && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "firestore:emulator": "firebase emulators:start --only firestore --project defendraai-84d7e"
+  },
+  "devDependencies": {
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "firebase-tools": "^13.35.1"
+  },
+  "build": {
+    "appId": "com.crps.desktop",
+    "productName": "Defendra.AI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  },
+  "dependencies": {
+    "cyber-resilience-protection-system": "file:"
+  }
+}
