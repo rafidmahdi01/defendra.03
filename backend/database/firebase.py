@@ -29,7 +29,7 @@ def init_firebase() -> None:
     emulator = settings.firestore_emulator_host
     cred_path = settings.firebase_credentials_path
     cred_json_b64 = settings.firebase_credentials_json
-    project_id = settings.firebase_project_id or "defendraai-84d7e"
+    project_id = settings.firebase_project_id or "defendraai"
 
     # Route traffic to emulator when configured, or ensure no stale env var
     # bleeds into cloud mode (an empty FIRESTORE_EMULATOR_HOST causes dns:/// crash).
@@ -113,7 +113,7 @@ def get_firestore() -> Client:
     init_firebase()
     settings = get_settings()
     emulator = (settings.firestore_emulator_host or "").strip()
-    project_id = settings.firebase_project_id or "defendraai-84d7e"
+    project_id = settings.firebase_project_id or "defendraai"
     if emulator:
         os.environ["FIRESTORE_EMULATOR_HOST"] = emulator
         from google.cloud import firestore as gc_firestore

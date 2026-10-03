@@ -9,7 +9,7 @@
     "electron:dev": "cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .",
     "electron:build": "npm run frontend:build && electron-builder",
     "backend:dev": "cd backend && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-    "firestore:emulator": "firebase emulators:start --only firestore --project defendraai-84d7e"
+    "firestore:emulator": "firebase emulators:start --only firestore --project defendraai"
   },
   "devDependencies": {
     "cross-env": "latest",

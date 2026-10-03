@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         description='Local emulator, e.g. "127.0.0.1:8080". Sets FIRESTORE_EMULATOR_HOST for firebase-admin.',
     )
     firebase_project_id: str = Field(
-        default="defendraai-84d7e",
+        default="defendraai",
         description="GCP project id (required for emulator; can match your Firebase project in production).",
     )
 
