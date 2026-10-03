@@ -1,34 +1,15 @@
 # Defendra.AI - Render.com Blueprint for One-Click Demo Deployment
 # Usage: 
-#   1. Push this file to your GitHub repo
-#   2. Go to https://dashboard.render.com/blueprints
-#   3. Click "New Blueprint Instance" and select your repo
-#   4. Set the required environment variables when prompted
+#   1. Create a Firebase project at https://console.firebase.google.com
+#   2. Enable Firestore Database in the Firebase console
+#   3. Generate a service account key (Project Settings > Service Accounts)
+#   4. Base64 encode the JSON key: [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content firebase-key.json -Raw)))
+#   5. Push this file to your GitHub repo
+#   6. Go to https://dashboard.render.com/blueprints
+#   7. Click "New Blueprint Instance" and select your repo
+#   8. Paste the base64-encoded Firebase credentials when prompted
 
 services:
-  # ─────────────────────────────────────────────────────────────────────────
-  # MySQL Database
-  # ─────────────────────────────────────────────────────────────────────────
-  - type: pserv
-    name: defendra-mysql
-    env: docker
-    plan: free
-    region: oregon
-    dockerfilePath: ./database/Dockerfile
-    dockerContext: ./database
-    disk:
-      name: mysql-data
-      mountPath: /var/lib/mysql
-      sizeGB: 1
-    envVars:
-      - key: MYSQL_DATABASE
-        value: cyber_resilience_db
-      - key: MYSQL_USER
-        value: crps_user
-      - key: MYSQL_PASSWORD
-        generateValue: true
-      - key: MYSQL_ROOT_PASSWORD
-        generateValue: true
 
   # ─────────────────────────────────────────────────────────────────────────
   # Backend API (FastAPI)
@@ -51,11 +32,11 @@ services:
         value: production
       - key: DEBUG
         value: false
-      # Database connection - uses internal Render hostname
-      - key: DATABASE_URL
-        value: mysql+pymysql://crps_user:${MYSQL_PASSWORD}@defendra-mysql:3306/cyber_resilience_db
-      - key: AUTO_CREATE_TABLES
-        value: "true"
+      # Firebase/Firestore Configuration
+      - key: FIREBASE_PROJECT_ID
+        sync: false  # Set manually in dashboard
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false  # Set to base64-encoded service account JSON
       # JWT Authentication
       - key: JWT_SECRET_KEY
         generateValue: true
@@ -66,13 +47,6 @@ services:
       # CORS - will be updated after frontend deployment
       - key: ALLOWED_ORIGINS
         value: https://defendra-frontend.onrender.com,http://localhost:5173
-      # Firebase (optional - can use Firestore or skip for demo)
-      - key: FIREBASE_PROJECT_ID
-        value: defendraai
-      - key: FIRESTORE_EMULATOR_HOST
-        value: ""
-      - key: FIREBASE_CREDENTIALS_PATH
-        value: ""
       # HuggingFace (optional - for Sentinel AI chat)
       - key: HUGGINGFACE_API_KEY
         sync: false  # Set manually in dashboard
@@ -115,4 +89,5 @@ services:
 # - First request after spin-down may take 30-60 seconds
 # - Update ALLOWED_ORIGINS and VITE_API_URL with your actual Render URLs
 # - Generate a strong JWT_SECRET_KEY (64+ characters)
+# - Firebase credentials must be base64-encoded JSON from service account key
 # ───────────────────────────────────────────────────────────────────────────
