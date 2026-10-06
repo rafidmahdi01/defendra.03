@@ -1,14 +1,13 @@
 from datetime import datetime, timezone
 import base64
 import hashlib
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from google.cloud.firestore import Client
 from cryptography.fernet import Fernet, InvalidToken
 
 from auth.dependencies import get_current_user, get_optional_current_user, require_admin
-from auth.security import create_access_token, hash_password, verify_password
+from auth.security import create_access_token, generate_otp, hash_password, verify_password
 from database.firebase import get_firestore
 from models.models import UserDoc
 from models.schemas import (
@@ -271,17 +270,28 @@ def register(
     db: Client = Depends(get_firestore),
     current_user: UserDoc | None = Depends(get_optional_current_user),
 ):
-    """Public signup creates a user account. Only admins may assign the admin role."""
+    """
+    Public signup creates a user account. 
+    - Unauthenticated users: creates account with is_active=False (pending admin approval)
+    - Admin users: creates account with is_active=True (immediate activation)
+    Only admins may assign the admin role.
+    """
     email = _normalize_email(str(payload.email))
     existing = db.collection("users").where("email", "==", email).limit(1).get()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered")
 
+    # Determine role based on current user permissions
     requested_role = (payload.role or "user").lower()
     if current_user and current_user.role == "admin" and requested_role in ("user", "admin"):
         role = requested_role
     else:
         role = "user"
+
+    # Determine activation status based on authentication
+    # Admin creates user -> immediately active
+    # Unauthenticated self-registration -> pending approval (is_active=False)
+    is_active = current_user is not None and current_user.role == "admin"
 
     now = datetime.now(timezone.utc)
     ref = db.collection("users").document()
@@ -291,7 +301,7 @@ def register(
             "full_name": payload.full_name,
             "hashed_password": hash_password(payload.password),
             "role": role,
-            "is_active": True,
+            "is_active": is_active,
             "created_at": now,
             "updated_at": now,
             "last_login_at": None,
@@ -333,21 +343,117 @@ def bootstrap_admin(payload: UserCreate, db: Client = Depends(get_firestore)):
     return _user_to_read(user)
 
 
-@router.post("/login", response_model=Token)
-async def login(payload: LoginRequest, request: Request, db: Client = Depends(get_firestore)):
-    email = _normalize_email(str(payload.email))
+@router.post("/request-otp", response_model=MessageResponse)
+async def request_otp(
+    email: str,
+    password: str,
+    request: Request,
+    db: Client = Depends(get_firestore)
+):
+    """
+    Step 1 of MFA: Verify email and password, then generate and send OTP.
+    Only generates OTP if credentials are correct and account is active.
+    Returns 403 if account is pending admin approval.
+    """
+    email = _normalize_email(email)
+    
+    # Find user by email
     docs = firestore_call_with_retry(
         lambda: list(db.collection("users").where("email", "==", email).limit(1).stream())
     )
     if not docs:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+        # Don't reveal whether user exists (security best practice)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+    
+    snap = docs[0]
+    user = UserDoc.from_firestore(snap.id, snap.to_dict())
+    
+    # Verify password first (before revealing account status)
+    if not verify_password(password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+    
+    # Check if account is active (pending admin approval)
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending administrator approval"
+        )
+    
+    # Generate OTP
+    otp_code = generate_otp()
+    now = datetime.now(timezone.utc)
+    expiration = now.timestamp() + 300  # 5 minutes
+    
+    # Store OTP in Firestore otps collection
+    otp_ref = db.collection("otps").document(user.id)
+    otp_ref.set({
+        "user_id": user.id,
+        "email": email,
+        "code": otp_code,
+        "expires_at": expiration,
+        "created_at": now,
+        "used": False,
+    })
+    
+    # TODO: In production, send OTP via email using SMTP
+    # For now, log it (in dev) or simulate sending
+    print(f"[auth] OTP for {email}: {otp_code} (expires in 5 minutes)")
+    
+    record_audit(db, "auth.request_otp", user=user, request=request)
+    
+    return MessageResponse(message="OTP code sent to your email")
+
+
+@router.post("/login", response_model=Token)
+async def login(
+    email: str,
+    otp_code: str,
+    request: Request,
+    db: Client = Depends(get_firestore)
+):
+    """
+    Step 2 of MFA: Verify OTP code and issue JWT access token.
+    OTP must be requested first via /request-otp with valid credentials.
+    """
+    email = _normalize_email(email)
+    
+    # Find user
+    docs = firestore_call_with_retry(
+        lambda: list(db.collection("users").where("email", "==", email).limit(1).stream())
+    )
+    if not docs:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or OTP")
 
     snap = docs[0]
     user = UserDoc.from_firestore(snap.id, snap.to_dict())
-    if not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-
+    
+    # Retrieve OTP from Firestore
+    otp_doc = db.collection("otps").document(user.id).get()
+    if not otp_doc.exists:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired OTP")
+    
+    otp_data = otp_doc.to_dict()
     now = datetime.now(timezone.utc)
+    
+    # Validate OTP
+    if otp_data.get("used", False):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OTP already used")
+    
+    if now.timestamp() > otp_data.get("expires_at", 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OTP expired")
+    
+    if otp_data.get("code") != otp_code:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP")
+    
+    # Mark OTP as used
+    otp_doc.reference.update({"used": True})
+
     ip_address = request.client.host if request.client else None
     snap.reference.update(
         {
@@ -411,3 +517,56 @@ async def logout(
 @router.get("/me", response_model=UserRead)
 def me(current_user: UserDoc = Depends(get_current_user)):
     return _user_to_read(current_user)
+
+
+@router.patch("/users/{user_id}/approve", response_model=UserRead)
+def approve_user(
+    user_id: str,
+    request: Request,
+    db: Client = Depends(get_firestore),
+    current_user: UserDoc = Depends(require_admin),
+):
+    """
+    Admin-only endpoint to approve a pending user account.
+    Sets the user's is_active flag to True, allowing them to authenticate.
+    """
+    # Fetch the target user
+    user_ref = db.collection("users").document(user_id)
+    user_snap = user_ref.get()
+    
+    if not user_snap.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user = UserDoc.from_firestore(user_snap.id, user_snap.to_dict())
+    
+    # Update is_active to True
+    now = datetime.now(timezone.utc)
+    user_ref.update({
+        "is_active": True,
+        "updated_at": now
+    })
+    
+    # Refresh user object
+    user = UserDoc.from_firestore(
+        user_snap.id,
+        {
+            **user_snap.to_dict(),
+            "is_active": True,
+            "updated_at": now,
+        }
+    )
+    
+    # Record audit trail
+    record_audit(
+        db,
+        "user.approve",
+        user=current_user,
+        request=request,
+        resource_type="user",
+        resource_id=user_id
+    )
+    
+    return _user_to_read(user)

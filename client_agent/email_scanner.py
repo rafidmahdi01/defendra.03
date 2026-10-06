@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import requests
-from dotenv import dotenv_values, load_dotenv
+from dotenv import load_dotenv
 
 from scan_config import SCAN_INTERVAL_SECONDS
 from utils.ai_analyzer import analyze_email_with_ai, analyze_threat, huggingface_configured
@@ -17,39 +17,32 @@ _BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=_BASE_DIR / ".env")
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 
-_PLACEHOLDER_EMAILS = {
-    "",
-    "your_email@gmail.com",
-    "admin@example.com",
-    "your_email@example.com",
-}
-_PLACEHOLDER_PASSWORDS = {
-    "",
-    "your_app_password_here",
-    "change-me",
-    "your_password_here",
-}
-
 _last_auth_error_at = 0.0
 
-
-def _read_email_credentials() -> tuple[str, str]:
-    values = dotenv_values(_BASE_DIR / ".env") if (_BASE_DIR / ".env").exists() else {}
-    email_address = (values.get("EMAIL_ADDRESS") or os.getenv("EMAIL_ADDRESS") or "").strip()
-    email_password = (values.get("EMAIL_PASSWORD") or os.getenv("EMAIL_PASSWORD") or "").strip()
-    return email_address, email_password
+# Global variable to hold OAuth 2.0 access token (passed in-memory from backend)
+_oauth_access_token: str | None = None
+_monitored_email_address: str | None = None
 
 
-def email_scanner_configured() -> bool:
-    """True when real Gmail IMAP credentials are set (not template placeholders)."""
-    email_address, email_password = _read_email_credentials()
-    if email_address.lower() in _PLACEHOLDER_EMAILS:
-        return False
-    if email_password in _PLACEHOLDER_PASSWORDS:
-        return False
-    if email_address.startswith("your_") or email_password.startswith("your_"):
-        return False
-    return "@" in email_address
+# Removed legacy functions:
+# - _read_email_credentials: no longer reading plaintext passwords from .env
+# - email_scanner_configured: replaced by token-based authentication check
+
+
+def set_oauth_token(email_address: str, access_token: str) -> None:
+    """
+    Set OAuth 2.0 credentials for IMAP authentication.
+    Called by the backend after completing OAuth flow.
+    """
+    global _oauth_access_token, _monitored_email_address
+    _oauth_access_token = access_token
+    _monitored_email_address = email_address
+    print(f"[email_scanner] OAuth token configured for {email_address}")
+
+
+def oauth_configured() -> bool:
+    """Returns True if OAuth 2.0 credentials are available in memory."""
+    return bool(_oauth_access_token and _monitored_email_address)
 
 
 def check_virustotal(url):
@@ -74,14 +67,16 @@ def check_virustotal(url):
 def scan_emails():
     global _last_auth_error_at
 
-    email_address, email_password = _read_email_credentials()
-
-    if not email_scanner_configured():
+    if not oauth_configured():
         return
 
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(email_address, email_password)
+        
+        # Use XOAUTH2 SASL mechanism instead of password authentication
+        auth_string = f"user={_monitored_email_address}\1auth=Bearer {_oauth_access_token}\1\1"
+        mail.authenticate("XOAUTH2", lambda x: auth_string.encode())
+        
         mail.select("inbox")
 
         _, messages = mail.search(None, "UNSEEN")
@@ -144,10 +139,9 @@ def scan_emails():
             now = time.time()
             if now - _last_auth_error_at > 300:
                 print(
-                    "[email_scanner] Gmail login failed. Use a Google **App Password** "
-                    "(Google Account → Security → 2-Step Verification → App passwords), "
-                    "not your normal Gmail password. Update EMAIL_ADDRESS / EMAIL_PASSWORD "
-                    "in client_agent/.env, or leave them empty to disable email scanning."
+                    "[email_scanner] Gmail OAuth authentication failed. "
+                    "The OAuth 2.0 access token may have expired. "
+                    "Please re-authenticate through the Defendra dashboard."
                 )
                 _last_auth_error_at = now
         else:
@@ -165,9 +159,10 @@ def run_email_scanner():
             "[email_scanner] Hugging Face LLM disabled — set HUGGINGFACE_API_KEY in client_agent/.env "
             "to enable AI phishing analysis after rule signals fire."
         )
+    print("[email_scanner] Waiting for OAuth 2.0 token from dashboard...")
     while True:
         sync_email_scanner_settings()
-        if not email_scanner_configured():
+        if not oauth_configured():
             time.sleep(SCAN_INTERVAL_SECONDS)
             continue
         scan_emails()

@@ -1,11 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
-  Eye,
-  EyeOff,
+  ArrowLeft,
   HelpCircle,
   KeyRound,
-  Lock,
   Mail,
+  RefreshCw,
   User,
   Wifi,
   WifiOff,
@@ -20,6 +19,7 @@ import { api, API_URL } from "@/services/api";
 import { notifyAuthChanged } from "@/hooks/useCurrentUser";
 
 type Mode = "login" | "register";
+type LoginStep = "credentials" | "otp";
 
 function formatAuthError(err: unknown, apiUrl: string): string {
   const e = err as {
@@ -100,51 +100,75 @@ export default function LoginPage() {
   const serverStatus = useServerStatus();
 
   const [mode, setMode] = useState<Mode>("login");
+  const [loginStep, setLoginStep] = useState<LoginStep>("credentials");
   const [form, setForm] = useState({
     email: "admin@example.com",
     password: "",
     full_name: "Security Admin",
   });
+  const [otpCode, setOtpCode] = useState("");
+  const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
+  const [otpTimeLeft, setOtpTimeLeft] = useState<number>(0);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
-  const [passwordVisible, setPasswordVisible] = useState(false);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  // OTP countdown timer
+  useEffect(() => {
+    if (!otpExpiresAt) return;
+    
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const timeLeft = Math.max(0, Math.floor((otpExpiresAt - now) / 1000));
+      setOtpTimeLeft(timeLeft);
+      
+      if (timeLeft === 0) {
+        setError("OTP code has expired. Please request a new one.");
+        clearInterval(interval);
+      }
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [otpExpiresAt]);
+
+  const requestOtp = async () => {
     setError("");
     setInfo("");
+    
+    if (!form.email.trim()) {
+      setError("Please enter your email address");
+      return;
+    }
+    
+    if (!form.password.trim()) {
+      setError("Please enter your password");
+      return;
+    }
+    
     setLoading(true);
     try {
-      if (mode === "register") {
-        await api.post("/auth/bootstrap-admin", form);
-        setInfo("Administrator created. You can now sign in.");
-        setMode("login");
-      } else {
-        const { data } = await api.post("/auth/login", {
-          email: form.email,
-          password: form.password,
-        });
-        localStorage.setItem("crps_token", data.access_token);
-        localStorage.setItem(
-          "crps_user",
-          JSON.stringify({
-            ...data.user,
-            role: data.user?.role || data.role,
-          }),
-        );
-        notifyAuthChanged();
-        navigate("/");
-      }
-    } catch (err: unknown) {
+      await api.post("/auth/request-otp", null, {
+        params: { 
+          email: form.email.trim(),
+          password: form.password
+        }
+      });
+      
+      // Set expiration time (5 minutes from now)
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      setOtpExpiresAt(expiresAt);
+      setOtpTimeLeft(300);
+      
+      setLoginStep("otp");
+      setInfo("A 6-digit verification code has been sent to your email.");
+      setOtpCode("");
+    } catch (err) {
       const status = (err as { response?: { status?: number } })?.response?.status;
-      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-      if (mode === "register" && status === 403) {
-        setError(
-          typeof detail === "string"
-            ? `${detail} Sign in as an admin and create more accounts under Settings.`
-            : "Bootstrap only works before any users exist. Sign in as an admin and add accounts under Settings.",
-        );
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      
+      // Handle pending approval error
+      if (status === 403 && detail === "Account pending administrator approval") {
+        setError("Account pending administrator approval");
       } else {
         setError(formatAuthError(err, API_URL));
       }
@@ -153,8 +177,100 @@ export default function LoginPage() {
     }
   };
 
-  const forgotPassword = () => {
-    setInfo("Contact your system administrator to reset your password.");
+  const verifyOtp = async () => {
+    setError("");
+    setInfo("");
+    
+    if (otpCode.length !== 6) {
+      setError("Please enter the complete 6-digit code");
+      return;
+    }
+    
+    if (otpTimeLeft === 0) {
+      setError("OTP code has expired. Please request a new one.");
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const { data } = await api.post("/auth/login", null, {
+        params: {
+          email: form.email.trim(),
+          otp_code: otpCode
+        }
+      });
+      
+      localStorage.setItem("crps_token", data.access_token);
+      localStorage.setItem(
+        "crps_user",
+        JSON.stringify({
+          ...data.user,
+          role: data.user?.role || data.role,
+        }),
+      );
+      notifyAuthChanged();
+      navigate("/");
+    } catch (err) {
+      setError(formatAuthError(err, API_URL));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const changeEmail = () => {
+    setLoginStep("credentials");
+    setOtpCode("");
+    setOtpExpiresAt(null);
+    setOtpTimeLeft(0);
+    setError("");
+    setInfo("");
+  };
+
+  const resendOtp = async () => {
+    setOtpCode("");
+    await requestOtp();
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setInfo("");
+    
+    if (mode === "register") {
+      setLoading(true);
+      try {
+        await api.post("/auth/register", form);
+        setInfo("Account created successfully. Please wait for an administrator to approve your account before logging in.");
+        setMode("login");
+        setLoginStep("credentials");
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+        if (status === 403) {
+          setError(
+            typeof detail === "string"
+              ? `${detail} Sign in as an admin and create more accounts under Settings.`
+              : "Bootstrap only works before any users exist. Sign in as an admin and add accounts under Settings.",
+          );
+        } else {
+          setError(formatAuthError(err, API_URL));
+        }
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      if (loginStep === "credentials") {
+        await requestOtp();
+      } else {
+        await verifyOtp();
+      }
+    }
+  };
+
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const statusConfig = {
@@ -204,15 +320,19 @@ export default function LoginPage() {
             {/* Card header */}
             <div className="mb-6 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--mint)]/10 ring-1 ring-[var(--mint)]/30">
-                <Lock className="h-5 w-5 text-[var(--mint)]" />
+                <KeyRound className="h-5 w-5 text-[var(--mint)]" />
               </div>
               <h2 className="text-lg font-semibold tracking-tight">
-                {mode === "login" ? "Login Panel" : "Create Administrator"}
+                {mode === "login" 
+                  ? (loginStep === "credentials" ? "Sign In" : "Verify Code") 
+                  : "Create Administrator"}
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {mode === "login"
-                  ? "Secure access · JWT authenticated"
-                  : "First-run setup · bootstrap admin account"}
+                  ? (loginStep === "credentials" 
+                      ? "Secure access · OTP authenticated" 
+                      : "Enter the code sent to your email")
+                  : "Self-registration · requires admin approval"}
               </p>
             </div>
 
@@ -228,26 +348,76 @@ export default function LoginPage() {
                 />
               )}
 
-              {/* Username / email */}
-              <InputField
-                icon={<Mail className="h-4 w-4" />}
-                label="Username"
-                type="email"
-                placeholder="admin@example.com"
-                value={form.email}
-                onChange={(v) => setForm({ ...form, email: v })}
-              />
+              {/* Email field - always visible for register, shown/read-only for login */}
+              {mode === "register" || loginStep === "credentials" ? (
+                <InputField
+                  icon={<Mail className="h-4 w-4" />}
+                  label={mode === "register" ? "Email Address" : "Corporate Email"}
+                  type="email"
+                  placeholder="admin@example.com"
+                  value={form.email}
+                  onChange={(v) => setForm({ ...form, email: v })}
+                />
+              ) : (
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Corporate Email
+                  </label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                      <Mail className="h-4 w-4" />
+                    </span>
+                    <div className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-4 text-sm flex items-center text-muted-foreground">
+                      {form.email}
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              {/* Password */}
-              <PasswordInput
-                label="Password"
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                value={form.password}
-                visible={passwordVisible}
-                onToggle={() => setPasswordVisible((v) => !v)}
-                onChange={(v) => setForm({ ...form, password: v })}
-              />
+              {/* Password field - for register mode AND credentials step in login */}
+              {(mode === "register" || (mode === "login" && loginStep === "credentials")) && (
+                <InputField
+                  icon={<KeyRound className="h-4 w-4" />}
+                  label="Password"
+                  type="password"
+                  placeholder={mode === "register" ? "Create a secure password" : "Enter your password"}
+                  value={form.password}
+                  onChange={(v) => setForm({ ...form, password: v })}
+                />
+              )}
+
+              {/* OTP Code field - only in OTP step */}
+              {mode === "login" && loginStep === "otp" && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Verification Code
+                  </label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                      <KeyRound className="h-4 w-4" />
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={otpCode}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/\D/g, '');
+                        setOtpCode(value);
+                      }}
+                      className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-4 text-sm text-center tracking-[0.5em] placeholder:text-muted-foreground/50 placeholder:tracking-normal focus:border-[var(--electric)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--electric)]/20"
+                      autoFocus
+                    />
+                  </div>
+                  {otpTimeLeft > 0 && (
+                    <p className="mt-1.5 text-center text-xs text-muted-foreground">
+                      Code expires in <span className="font-semibold text-[var(--mint)]">{formatTime(otpTimeLeft)}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Feedback banners */}
               {error && (
@@ -270,21 +440,37 @@ export default function LoginPage() {
                 {loading ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
                 ) : (
-                  <Lock className="h-4 w-4" />
+                  <KeyRound className="h-4 w-4" />
                 )}
-                {loading ? "Processing…" : mode === "login" ? "Login" : "Create Administrator"}
+                {loading 
+                  ? "Processing…" 
+                  : mode === "login" 
+                    ? (loginStep === "credentials" ? "Send Login Code" : "Verify & Sign In") 
+                    : "Create Account"}
               </button>
 
-              {/* Forgot Password (login mode only) */}
-              {mode === "login" && (
-                <button
-                  type="button"
-                  onClick={forgotPassword}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-medium text-muted-foreground transition hover:bg-white/10 hover:text-foreground"
-                >
-                  <HelpCircle className="h-3.5 w-3.5" />
-                  Forgot Password
-                </button>
+              {/* Change email / Resend code options (OTP step only) */}
+              {mode === "login" && loginStep === "otp" && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={changeEmail}
+                    disabled={loading}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-medium text-muted-foreground transition hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Back to Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resendOtp}
+                    disabled={loading}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-medium text-muted-foreground transition hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Resend Code
+                  </button>
+                </div>
               )}
 
               {/* Divider */}
@@ -294,7 +480,7 @@ export default function LoginPage() {
                 <div className="flex-1 border-t border-white/5" />
               </div>
 
-              {mode === "login" ? (
+              {mode === "login" && loginStep === "credentials" ? (
                 <p className="text-center text-xs text-muted-foreground">
                   Need to add a user?{" "}
                   <Link
@@ -304,17 +490,17 @@ export default function LoginPage() {
                     Create Account
                   </Link>
                 </p>
-              ) : (
+              ) : mode === "register" ? (
                 <button
                   type="button"
-                  onClick={() => { setMode("login"); setError(""); setInfo(""); }}
+                  onClick={() => { setMode("login"); setLoginStep("credentials"); setError(""); setInfo(""); }}
                   className="w-full text-center text-xs text-muted-foreground transition hover:text-[var(--mint)]"
                 >
                   ← Back to sign in
                 </button>
-              )}
+              ) : null}
 
-              {mode === "login" ? (
+              {mode === "login" && loginStep === "credentials" ? (
                 <button
                   type="button"
                   onClick={() => { setMode("register"); setError(""); setInfo(""); }}
@@ -410,63 +596,6 @@ function InputField({
           onChange={(e) => onChange(e.target.value)}
           className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-4 text-sm placeholder:text-muted-foreground/50 focus:border-[var(--electric)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--electric)]/20"
         />
-      </div>
-    </div>
-  );
-}
-
-function PasswordInput({
-  label,
-  placeholder,
-  value,
-  visible,
-  onToggle,
-  onChange,
-  autoComplete,
-}: {
-  label: string;
-  placeholder: string;
-  value: string;
-  visible: boolean;
-  onToggle: () => void;
-  onChange: (v: string) => void;
-  autoComplete?: string;
-}) {
-  return (
-    <div>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </label>
-      <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-          <Lock className="h-4 w-4" />
-        </span>
-        <input
-          type="text"
-          name="password"
-          autoComplete={autoComplete}
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          data-lpignore="true"
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-10 text-sm placeholder:text-muted-foreground/50 focus:border-[var(--electric)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--electric)]/20 ${
-            visible ? "" : "password-masked"
-          }`}
-        />
-        <button
-          type="button"
-          tabIndex={-1}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onToggle}
-          aria-label={visible ? "Hide password" : "Show password"}
-          aria-pressed={visible}
-          className="absolute right-3 top-1/2 z-10 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-        >
-          {visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-        </button>
       </div>
     </div>
   );

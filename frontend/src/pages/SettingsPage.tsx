@@ -102,6 +102,7 @@ type ManagedUser = {
   email: string;
   full_name: string;
   role: string;
+  is_active: boolean;
 };
 
 const inputClass =
@@ -134,9 +135,11 @@ export default function SettingsPage() {
   const [emailSettings, setEmailSettings] = useState({
     email_address: "",
     email_password: "",
+    is_configured: false,
   });
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState("");
+  const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
   const [emailSettingsBusy, setEmailSettingsBusy] = useState(false);
   const [emailSettingsMsg, setEmailSettingsMsg] = useState("");
   const [emailSettingsErr, setEmailSettingsErr] = useState("");
@@ -190,9 +193,10 @@ export default function SettingsPage() {
         ...current,
         email_address: data?.email_address || "",
         email_password: "",
+        is_configured: data?.is_configured || false,
       }));
     } catch {
-      setEmailSettings((current) => ({ ...current, email_password: "" }));
+      setEmailSettings((current) => ({ ...current, email_password: "", is_configured: false }));
     }
   }, [connected, isAdmin, selectedUserId]);
 
@@ -221,7 +225,7 @@ export default function SettingsPage() {
         email_address: emailSettings.email_address.trim(),
         email_password: emailSettings.email_password,
       });
-      setEmailSettings((current) => ({ ...current, email_password: "" }));
+      setEmailSettings((current) => ({ ...current, email_password: "", is_configured: true }));
       setEmailSettingsMsg("Email scanner credentials saved. The agent will use them on the next scan cycle.");
     } catch (error: unknown) {
       const detail =
@@ -233,6 +237,32 @@ export default function SettingsPage() {
       setEmailSettingsBusy(false);
     }
   }, [emailSettings.email_address, emailSettings.email_password, isAdmin, selectedUserId]);
+
+  const approveUser = useCallback(async (userId: string) => {
+    setApprovingUserId(userId);
+    try {
+      await api.patch(`/auth/users/${userId}/approve`);
+      
+      // Update local state to reflect approval
+      setManagedUsers((users) =>
+        users.map((user) =>
+          user.id === userId ? { ...user, is_active: true } : user
+        )
+      );
+      
+      setInviteMsg("User approved successfully. They can now log in.");
+      setTimeout(() => setInviteMsg(""), 5000);
+    } catch (error: unknown) {
+      const detail =
+        error && typeof error === "object" && "response" in error
+          ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined;
+      setInviteErr(typeof detail === "string" ? detail : "Failed to approve user.");
+      setTimeout(() => setInviteErr(""), 5000);
+    } finally {
+      setApprovingUserId(null);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -520,6 +550,67 @@ export default function SettingsPage() {
               </button>
             </div>
           </form>
+        </GlassCard>
+
+        {/* User Management & Approval */}
+        <GlassCard
+          title="User Management"
+          subtitle="Manage users and approve pending accounts"
+          icon={<Users className="h-4 w-4" />}
+          className="overflow-visible"
+        >
+          {managedUsers.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-4">
+              No users found. Create a user account above.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {managedUsers.map((user) => (
+                <div
+                  key={user.id}
+                  className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 hover:bg-white/[0.04] transition"
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium">{user.full_name}</p>
+                      {!user.is_active && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--warning)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--warning)] ring-1 ring-[var(--warning)]/20">
+                          Pending Approval
+                        </span>
+                      )}
+                      {user.is_active && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--success)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--success)] ring-1 ring-[var(--success)]/20">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {user.email} · {user.role}
+                    </p>
+                  </div>
+                  {!user.is_active && (
+                    <button
+                      onClick={() => approveUser(user.id)}
+                      disabled={approvingUserId === user.id}
+                      className="flex items-center gap-1.5 rounded-lg bg-[var(--mint)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--mint)] transition hover:bg-[var(--mint)]/20 disabled:opacity-50 ring-1 ring-[var(--mint)]/20"
+                    >
+                      {approvingUserId === user.id ? (
+                        <>
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--mint)]/30 border-t-[var(--mint)]" />
+                          Approving...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="h-3 w-3" />
+                          Approve
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </GlassCard>
 
         <GlassCard

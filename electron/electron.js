@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, safeStorage } = require("electron");
 const os = require("os");
 const path = require("path");
+const fs = require("fs");
 
 // Keep hardware acceleration enabled; allow Electron to use the system GPU.
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
@@ -104,6 +105,38 @@ app.whenReady().then(() => {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
   });
+
+  // Secure API key storage using OS-native encryption (Windows DPAPI, macOS Keychain, Linux libsecret)
+  const apiKeyPath = path.join(app.getPath("userData"), "gemini_api_key.enc");
+
+  ipcMain.handle("save-api-key", async (event, apiKey) => {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error("OS encryption not available");
+      }
+      const encrypted = safeStorage.encryptString(apiKey);
+      fs.writeFileSync(apiKeyPath, encrypted);
+      return { success: true };
+    } catch (error) {
+      console.error("[electron] Failed to save API key:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("get-api-key", async () => {
+    try {
+      if (!fs.existsSync(apiKeyPath)) {
+        return { success: true, apiKey: null };
+      }
+      const encrypted = fs.readFileSync(apiKeyPath);
+      const decrypted = safeStorage.decryptString(encrypted);
+      return { success: true, apiKey: decrypted };
+    } catch (error) {
+      console.error("[electron] Failed to retrieve API key:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
