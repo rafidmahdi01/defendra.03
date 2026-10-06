@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import base64
 import hashlib
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from google.cloud.firestore import Client
@@ -25,14 +26,18 @@ from models.schemas import (
     UserRead,
 )
 from services.audit_service import record_audit
+from services.email_service import get_email_service
 from utils.config import get_settings
 from utils.firestore_retry import firestore_call_with_retry
 from websocket.manager import manager
 
 
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 _EMAIL_SETTINGS_FIELD = "email_scanner_settings"
+
 
 
 def _normalize_email(email: str) -> str:
@@ -311,6 +316,43 @@ def register(
     )
     user = UserDoc.from_firestore(ref.id, ref.get().to_dict())
     record_audit(db, "user.register", user=user, request=request, resource_type="user", resource_id=user.id)
+    
+    # Send email notification to all admins if this is a self-registration (not admin-created)
+    if not is_active:  # User is pending approval
+        try:
+            # Get all admin users to send notifications
+            admin_docs = db.collection("users").where("role", "==", "admin").where("is_active", "==", True).stream()
+            admin_emails = [doc.to_dict().get("email") for doc in admin_docs if doc.to_dict().get("email")]
+            
+            # Send email to each admin
+            email_service = get_email_service()
+            for admin_email in admin_emails:
+                try:
+                    email_service.send_user_registration_notification(
+                        admin_email=admin_email,
+                        user_name=payload.full_name,
+                        user_email=email,
+                        approval_url=None,  # Can add frontend URL here if needed
+                    )
+                except Exception as e:
+                    # Log but don't fail the registration if email fails
+                    logger.warning(f"Failed to send email notification to {admin_email}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to send admin notifications: {e}")
+
+        # Broadcast WebSocket event so any logged-in admin sees the badge update in real-time
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(manager.broadcast("user.pending_registration", {
+                    "user_id": user.id,
+                    "full_name": user.full_name,
+                    "email": user.email,
+                }))
+        except Exception:
+            pass
+
     return _user_to_read(user)
 
 
@@ -569,4 +611,28 @@ def approve_user(
         resource_id=user_id
     )
     
+    # Broadcast WebSocket event so admin dashboard updates in real-time
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(manager.broadcast("user.approved", {"user_id": user_id}))
+    except Exception:
+        pass
+
     return _user_to_read(user)
+
+
+@router.get("/users/pending-count", response_model=dict)
+def get_pending_users_count(
+    db: Client = Depends(get_firestore),
+    current_user: UserDoc = Depends(require_admin),
+):
+    """
+    Admin-only endpoint to get the count of users pending approval.
+    Used for the in-app notification badge.
+    """
+    pending_docs = db.collection("users").where("is_active", "==", False).stream()
+    count = sum(1 for _ in pending_docs)
+    return {"pending_count": count}
+

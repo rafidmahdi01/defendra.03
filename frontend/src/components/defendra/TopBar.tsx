@@ -20,6 +20,7 @@ import {
   X,
   Link2,
   ListChecks,
+  UserCheck,
 } from "lucide-react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { DefendraLogo } from "./Logo";
@@ -90,7 +91,7 @@ function pickNotifIcon(title: string, desc: string): LucideIcon {
 export function TopBar() {
   const navigate = useNavigate();
   const { connected } = useServiceConnected();
-  const { displayName, roleLabel } = useCurrentUser();
+  const { displayName, roleLabel, isAdmin } = useCurrentUser();
 
   const [bellOpen, setBellOpen] = useState(false);
   const [rawAlerts, setRawAlerts] = useState<ApiAlertRow[]>([]);
@@ -98,10 +99,28 @@ export function TopBar() {
   const [localReadIds, setLocalReadIds] = useState<Set<string>>(() => new Set());
   const [wsLinked, setWsLinked] = useState(() => isWorkstationLinked());
   const [clearingNotifs, setClearingNotifs] = useState(false);
+  const [pendingUsersCount, setPendingUsersCount] = useState(0);
+  const [pendingUserNotifs, setPendingUserNotifs] = useState<Notif[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
 
   const electron = isElectronApp();
+
+  // Fetch pending users count (admin only)
+  const loadPendingUsersCount = useCallback(async () => {
+    if (!connected || !isAdmin || (electron && !wsLinked)) return;
+    try {
+      const { data } = await api.get<{ pending_count: number }>("/auth/users/pending-count");
+      setPendingUsersCount(data.pending_count ?? 0);
+    } catch {
+      setPendingUsersCount(0);
+    }
+  }, [connected, isAdmin, electron, wsLinked]);
+
+
+  useEffect(() => {
+    loadPendingUsersCount();
+  }, [loadPendingUsersCount]);
 
   useEffect(() => {
     const syncWs = () => setWsLinked(isWorkstationLinked());
@@ -139,7 +158,7 @@ export function TopBar() {
 
     socket.onmessage = (message) => {
       try {
-        const payload = JSON.parse(message.data) as { event?: string };
+        const payload = JSON.parse(message.data) as { event?: string; data?: { user_id?: string; full_name?: string; email?: string } };
         if (
           payload.event === "alert.created" ||
           payload.event === "alert.updated" ||
@@ -147,13 +166,35 @@ export function TopBar() {
         ) {
           loadAlerts();
         }
+        // Handle new user registration — update pending count and add in-app notification
+        if (payload.event === "user.pending_registration" && isAdmin) {
+          loadPendingUsersCount();
+          const newUserNotif: Notif = {
+            id: `pending-${payload.data?.user_id ?? Date.now()}`,
+            icon: UserCheck,
+            color: "var(--warning)",
+            title: "New User Registration",
+            desc: `${payload.data?.full_name ?? "A user"} (${payload.data?.email ?? ""}) is waiting for approval.`,
+            time: "just now",
+            read: false,
+          };
+          setPendingUserNotifs((prev) => [newUserNotif, ...prev]);
+        }
+        // Handle user approval — decrement pending count
+        if (payload.event === "user.approved" && isAdmin) {
+          loadPendingUsersCount();
+          // Remove the matching pending notif if it exists
+          setPendingUserNotifs((prev) =>
+            prev.filter((n) => n.id !== `pending-${payload.data?.user_id}`)
+          );
+        }
       } catch {
         /* ignore malformed frames */
       }
     };
 
     return () => socket.close();
-  }, [connected, electron, wsLinked, loadAlerts]);
+  }, [connected, electron, wsLinked, loadAlerts, loadPendingUsersCount, isAdmin]);
 
   useEffect(() => {
     if (bellOpen && connected) loadAlerts();
@@ -163,7 +204,7 @@ export function TopBar() {
     if (!connected || (electron && !wsLinked)) setBellOpen(false);
   }, [connected, electron, wsLinked]);
 
-  const notifs: Notif[] = rawAlerts
+  const alertNotifs: Notif[] = rawAlerts
     .filter((a) => !dismissedIds.has(a.id))
     .map((a) => ({
       id: a.id,
@@ -175,14 +216,27 @@ export function TopBar() {
       read: a.status === "resolved" || localReadIds.has(a.id),
     }));
 
-  const unread = notifs.filter((n) => !n.read).length;
+  // Combine alert notifications + pending user notifications (pending users first)
+  const notifs: Notif[] = [
+    ...pendingUserNotifs.filter((n) => !dismissedIds.has(n.id)),
+    ...alertNotifs,
+  ];
 
-  const markAllRead = () =>
+  // Total unread = unread alerts + all pending user notifs (they're always "unread" until dismissed)
+  const unread = alertNotifs.filter((n) => !n.read).length + pendingUserNotifs.filter((n) => !dismissedIds.has(n.id) && !n.read).length;
+
+  // Pending users badge (shown separately on Settings nav item)
+  const pendingBadge = pendingUsersCount > 0 && isAdmin;
+
+  const markAllRead = () => {
     setLocalReadIds((prev) => {
       const next = new Set(prev);
       notifs.forEach((n) => next.add(n.id));
       return next;
     });
+    // Also mark pending user notifs as read
+    setPendingUserNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
 
   const dismiss = (id: string) => {
     setDismissedIds((prev) => new Set(prev).add(id));
@@ -265,7 +319,7 @@ export function TopBar() {
             to={item.to}
             end={item.to === "/"}
             className={({ isActive }) =>
-              `flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-all ${
+              `relative flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-all ${
                 isActive
                   ? "bg-[var(--mint)]/15 text-[var(--mint)] ring-1 ring-[var(--mint)]/30"
                   : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
@@ -276,6 +330,12 @@ export function TopBar() {
               <>
                 <item.icon className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-[var(--mint)]" : ""}`} />
                 <span>{item.label}</span>
+                {/* Pending users badge on Settings nav item */}
+                {item.to === "/settings" && pendingBadge && (
+                  <span className="ml-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--warning)] px-1 text-[8px] font-bold text-black">
+                    {pendingUsersCount}
+                  </span>
+                )}
               </>
             )}
           </NavLink>
@@ -411,13 +471,22 @@ export function TopBar() {
               </div>
 
               {/* Footer */}
-              <div className="border-t border-white/5 px-4 py-2.5 text-center">
+              <div className="border-t border-white/5 px-4 py-2.5 flex items-center justify-between gap-2">
                 <button
                   onClick={() => { setBellOpen(false); navigate("/alerts"); }}
                   className="text-[11px] text-[var(--mint)] hover:underline"
                 >
                   View all alerts →
                 </button>
+                {pendingBadge && (
+                  <button
+                    onClick={() => { setBellOpen(false); navigate("/settings"); }}
+                    className="flex items-center gap-1 text-[11px] text-[var(--warning)] hover:underline"
+                  >
+                    <UserCheck className="h-3 w-3" />
+                    {pendingUsersCount} pending approval →
+                  </button>
+                )}
               </div>
             </div>
           )}
