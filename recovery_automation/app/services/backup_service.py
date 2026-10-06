@@ -1,11 +1,15 @@
 """
-Backup system: ZIP compression, local storage, optional S3, scheduled jobs.
+Backup system: ZIP compression, local storage, Firebase + optional S3, scheduled jobs.
+
+Auto-detects device_id from system hostname if not provided.
 """
 
+import platform
 import zipfile
 from pathlib import Path
 from typing import Any
 
+from app.integrations.firebase_client import FirebaseStorageClient
 from app.integrations.s3_client import S3BackupClient
 from app.utils.config import get_settings
 from app.utils.helper import (
@@ -27,7 +31,31 @@ class BackupService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.s3 = S3BackupClient()
+        self.firebase = FirebaseStorageClient()
         self.settings.backup_root_path.mkdir(parents=True, exist_ok=True)
+
+    def _get_device_id(self, provided_device_id: str | None = None) -> str:
+        """
+        Get device ID for backup. Priority:
+        1. Explicitly provided device_id (from request)
+        2. Auto-detected from system hostname
+        
+        Returns sanitized device_id suitable for storage paths.
+        """
+        if provided_device_id and provided_device_id.strip():
+            device_id = provided_device_id.strip()
+            logger.info("Using provided device_id: %s", device_id)
+            return device_id
+        
+        # Auto-detect from system hostname
+        hostname = platform.node() or "unknown-device"
+        # Sanitize: replace spaces and special chars with hyphens
+        device_id = hostname.lower().replace(" ", "-").replace("_", "-")
+        # Remove any remaining non-alphanumeric chars except hyphens
+        device_id = "".join(c if c.isalnum() or c == "-" else "" for c in device_id)
+        
+        logger.info("Auto-detected device_id from hostname: %s (original: %s)", device_id, hostname)
+        return device_id
 
     def create_backup(
         self,
@@ -37,9 +65,14 @@ class BackupService:
     ) -> dict[str, Any]:
         """
         Backup selected files/folders into a ZIP under backups/.
-        Optionally uploads to S3 and records rclone placeholder status.
+        Auto-detects device_id from system hostname if not provided.
+        Uploads to Firebase (primary) and S3 (optional).
         """
         backup_id = generate_backup_id()
+        
+        # Auto-detect device_id if not provided
+        device_id = self._get_device_id(device_id)
+        
         if paths:
             targets = resolve_safe_paths(paths)
             if not targets:
@@ -65,7 +98,7 @@ class BackupService:
         zip_path = archive_path(backup_id)
         file_count = 0
 
-        logger.info("Creating backup %s from %d path(s)", backup_id, len(targets))
+        logger.info("Creating backup %s from %d path(s) for device: %s", backup_id, len(targets), device_id)
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for target in targets:
                 if target.is_file():
@@ -79,6 +112,11 @@ class BackupService:
                             file_count += 1
 
         size_bytes = zip_path.stat().st_size
+        
+        # Upload to Firebase Storage (primary cloud storage) - always has device_id now
+        firebase_uri = self.firebase.upload_backup(zip_path, device_id, backup_id)
+        
+        # Upload to S3 (legacy/optional secondary storage)
         s3_uri = self.s3.upload_backup(zip_path, backup_id)
         rclone_status = self._rclone_sync_placeholder(zip_path)
 
@@ -91,6 +129,7 @@ class BackupService:
             "file_count": file_count,
             "size_bytes": size_bytes,
             "archive": str(zip_path.name),
+            "firebase_uri": firebase_uri,
             "s3_uri": s3_uri,
             "rclone_status": rclone_status,
         }
@@ -102,8 +141,16 @@ class BackupService:
         logger.info("Backup complete: %s (%d bytes)", backup_id, size_bytes)
         return meta
 
-    def list_backups(self) -> list[dict[str, Any]]:
-        """Return metadata for all local backups, newest first."""
+    def list_backups(self, device_id: str | None = None) -> list[dict[str, Any]]:
+        """
+        Return metadata for all local backups, newest first.
+        
+        Args:
+            device_id: If provided, filter to show only backups for this device.
+                       If None, show all backups (admin view).
+        
+        Note: Admin-downloaded backups are stored separately and excluded from this list.
+        """
         root = self.settings.backup_root_path
         backups: list[dict[str, Any]] = []
         for meta_file in sorted(root.glob("*.meta.json"), reverse=True):
@@ -111,6 +158,11 @@ class BackupService:
                 import json
 
                 data = json.loads(meta_file.read_text(encoding="utf-8"))
+                
+                # Filter by device_id if specified (user view)
+                if device_id and data.get("device_id") != device_id:
+                    continue
+                
                 zip_file = archive_path(data.get("backup_id", ""))
                 data["exists"] = zip_file.exists()
                 backups.append(data)

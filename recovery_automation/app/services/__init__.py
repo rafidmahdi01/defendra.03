@@ -4,6 +4,10 @@ from app.services.isolation_service import IsolationService
 from app.services.limp_mode_service import LimpModeService
 from app.services.notification_service import NotificationService
 from app.services.restore_service import RestoreService
+from app.services.admin_firebase_service import (
+    AdminFirebaseService,
+    AdminSecurityException,
+)
 
 __all__ = [
     "AutomationService",
@@ -12,4 +16,6 @@ __all__ = [
     "LimpModeService",
     "NotificationService",
     "RestoreService",
+    "AdminFirebaseService",
+    "AdminSecurityException",
 ]

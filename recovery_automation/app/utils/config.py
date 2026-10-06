@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     )
     backup_retention_days: int = Field(default=30, alias="BACKUP_RETENTION_DAYS")
 
+    # JWT (must match main Defendra API settings)
+    jwt_secret_key: str = Field(default="your-secret-key-change-in-production", alias="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+
+    # Firebase Cloud Storage
+    firebase_service_account_json: str = Field(default="", alias="FIREBASE_SERVICE_ACCOUNT_JSON")
+    firebase_storage_bucket: str = Field(default="", alias="FIREBASE_STORAGE_BUCKET")
+
     # AWS S3
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
