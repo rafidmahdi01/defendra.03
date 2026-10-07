@@ -6,6 +6,7 @@ import {
   HardDrive, Layers, ToggleLeft, ToggleRight, X,
 } from "lucide-react";
 import { GlassCard } from "@/components/defendra/Card";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const RECOVERY_URL = "http://127.0.0.1:8001";
 const recovery = axios.create({ baseURL: RECOVERY_URL, timeout: 15000 });
@@ -21,6 +22,7 @@ type Backup = {
   paths: string[];
   exists: boolean;
   s3_uri?: string | null;
+  device_id?: string;
 };
 
 type ScheduleStatus = {
@@ -81,9 +83,27 @@ function normalizePathInput(raw: string): string {
   return p;
 }
 
+/** Get device ID from hostname (matches backend logic) */
+function getDeviceId(): string {
+  try {
+    // Use hostname as device identifier (sanitized)
+    const hostname = window.location.hostname || "unknown-device";
+    const sanitized = hostname
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    return sanitized || "unknown-device";
+  } catch {
+    return "unknown-device";
+  }
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function BackupsPage() {
+  // Get current user for role-based filtering
+  const { user, isAdmin } = useCurrentUser();
+  
   // Connection to recovery service
   const [connected, setConnected] = useState(false);
 
@@ -130,14 +150,27 @@ export default function BackupsPage() {
     if (!connected) return;
     setLoadingBackups(true);
     try {
-      const { data } = await recovery.get<Backup[]>("/backup/list");
+      // Admin: Get ALL backups from all users/devices
+      // User: Get only backups from current device
+      let url = "/backup/list";
+      
+      if (!isAdmin) {
+        // For regular users, filter by device_id
+        // Get device_id from current hostname
+        const deviceId = getDeviceId();
+        if (deviceId) {
+          url = `/backup/list?device_id=${deviceId}`;
+        }
+      }
+      
+      const { data } = await recovery.get<Backup[]>(url);
       setBackups(data);
     } catch {
       // ignore
     } finally {
       setLoadingBackups(false);
     }
-  }, [connected]);
+  }, [connected, isAdmin]);
 
   const fetchSchedule = useCallback(async () => {
     if (!connected) return;
