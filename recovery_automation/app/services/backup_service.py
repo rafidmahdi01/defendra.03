@@ -62,11 +62,18 @@ class BackupService:
         paths: list[str] | None = None,
         label: str | None = None,
         device_id: str | None = None,
+        user_email: str | None = None,
     ) -> dict[str, Any]:
         """
         Backup selected files/folders into a ZIP under backups/.
         Auto-detects device_id from system hostname if not provided.
         Uploads to Firebase (primary) and S3 (optional).
+        
+        Args:
+            paths: List of paths to backup
+            label: Backup label
+            device_id: Device identifier
+            user_email: Email of user creating the backup (for filtering)
         """
         backup_id = generate_backup_id()
         
@@ -124,6 +131,7 @@ class BackupService:
             "backup_id": backup_id,
             "label": label or "manual",
             "device_id": device_id,
+            "user_email": user_email,
             "created_at": utc_now_iso(),
             "paths": [str(p) for p in targets],
             "file_count": file_count,
@@ -141,13 +149,18 @@ class BackupService:
         logger.info("Backup complete: %s (%d bytes)", backup_id, size_bytes)
         return meta
 
-    def list_backups(self, device_id: str | None = None) -> list[dict[str, Any]]:
+    def list_backups(
+        self, 
+        device_id: str | None = None,
+        user_email: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Return metadata for all local backups, newest first.
         
         Args:
             device_id: If provided, filter to show only backups for this device.
-                       If None, show all backups (admin view).
+            user_email: If provided, filter to show only backups created by this user.
+            Both None: show all backups (admin view).
         
         Note: Admin-downloaded backups are stored separately and excluded from this list.
         """
@@ -159,8 +172,12 @@ class BackupService:
 
                 data = json.loads(meta_file.read_text(encoding="utf-8"))
                 
-                # Filter by device_id if specified (user view)
+                # Filter by device_id if specified
                 if device_id and data.get("device_id") != device_id:
+                    continue
+                
+                # Filter by user_email if specified
+                if user_email and data.get("user_email") != user_email:
                     continue
                 
                 zip_file = archive_path(data.get("backup_id", ""))

@@ -23,6 +23,7 @@ type Backup = {
   exists: boolean;
   s3_uri?: string | null;
   device_id?: string;
+  user_email?: string;
 };
 
 type ScheduleStatus = {
@@ -150,18 +151,23 @@ export default function BackupsPage() {
     if (!connected) return;
     setLoadingBackups(true);
     try {
-      // Admin: Get ALL backups from all users/devices
-      // User: Get only backups from current device
+      // Admin: Get ALL backups from all users/devices (no filters)
+      // User: Get only backups created by this user on their device
       let url = "/backup/list";
       
       if (!isAdmin) {
-        // For regular users, filter by device_id
-        // Get device_id from current hostname
+        // For regular users, filter by BOTH device_id AND user_email
         const deviceId = getDeviceId();
-        if (deviceId) {
+        const userEmail = user.email;
+        
+        if (deviceId && userEmail) {
+          url = `/backup/list?device_id=${deviceId}&user_email=${encodeURIComponent(userEmail)}`;
+        } else if (deviceId) {
+          // Fallback: filter by device only if email not available
           url = `/backup/list?device_id=${deviceId}`;
         }
       }
+      // Admin: No filters, gets ALL backups
       
       const { data } = await recovery.get<Backup[]>(url);
       setBackups(data);
@@ -170,7 +176,7 @@ export default function BackupsPage() {
     } finally {
       setLoadingBackups(false);
     }
-  }, [connected, isAdmin]);
+  }, [connected, isAdmin, user.email]);
 
   const fetchSchedule = useCallback(async () => {
     if (!connected) return;
@@ -224,6 +230,8 @@ export default function BackupsPage() {
       const { data } = await recovery.post<Backup>("/backup/create", {
         paths: paths.length ? paths : null,
         label: manualLabel || "manual",
+        device_id: getDeviceId(),
+        user_email: user.email,
       });
       setBackupResult(data);
       await fetchBackups();

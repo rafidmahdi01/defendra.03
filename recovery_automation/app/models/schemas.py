@@ -12,6 +12,7 @@ class BackupCreateRequest(BaseModel):
     )
     label: str | None = Field(default="manual", description="Human-readable backup label")
     device_id: str | None = Field(default=None, description="Associated device id")
+    user_email: str | None = Field(default=None, description="Email of user creating backup")
 
 
 class BackupRestoreRequest(BaseModel):

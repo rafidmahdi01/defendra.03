@@ -22,14 +22,17 @@ def create_backup(payload: BackupCreateRequest) -> dict:
     Create a new ZIP backup of selected paths.
     
     Device ID is auto-detected if not provided.
+    User email should be provided for proper access control.
     """
     try:
         result = _backup.create_backup(
             paths=payload.paths,
             label=payload.label,
             device_id=payload.device_id,
+            user_email=payload.user_email,
         )
-        logger.info("Created backup %s", result.get("backup_id"))
+        logger.info("Created backup %s for user %s on device %s", 
+                   result.get("backup_id"), payload.user_email or "unknown", payload.device_id or "auto")
         return result
     except ValueError as exc:
         raise HTTPException(
@@ -45,15 +48,22 @@ def create_backup(payload: BackupCreateRequest) -> dict:
 
 
 @router.get("/list", response_model=list)
-def list_backups(device_id: str | None = None) -> list:
+def list_backups(
+    device_id: str | None = None,
+    user_email: str | None = None
+) -> list:
     """
     List backups.
     
     Query params:
         device_id: Optional filter to specific device
+        user_email: Optional filter to specific user
+        
+    No filters = admin view (all backups)
+    Both filters = user view (only their backups from their device)
     """
-    logger.info("Listing backups (filter: %s)", device_id or "all")
-    return _backup.list_backups(device_id=device_id)
+    logger.info("Listing backups (device_id=%s, user_email=%s)", device_id or "all", user_email or "all")
+    return _backup.list_backups(device_id=device_id, user_email=user_email)
 
 
 @router.delete("", response_model=dict)
