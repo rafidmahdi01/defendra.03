@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.integrations.api_client import get_api_client
-from app.integrations.s3_client import S3BackupClient
+from app.integrations.firebase_storage import FirebaseBackupClient
 from app.services.backup_service import BackupService
 from app.utils.config import get_settings
 from app.utils.helper import archive_path, read_metadata, utc_now_iso
@@ -23,7 +23,7 @@ class RestoreService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.backup_service = BackupService()
-        self.s3 = S3BackupClient()
+        self.s3 = FirebaseBackupClient()
         self.api = get_api_client()
 
     def restore_backup(

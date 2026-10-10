@@ -27,9 +27,18 @@ def init_firebase() -> None:
 
     settings = get_settings()
     emulator = settings.firestore_emulator_host
-    cred_path = settings.firebase_credentials_path
+    cred_path = os.getenv("FIREBASE_ADMIN_CREDENTIALS") or settings.firebase_credentials_path
     cred_json_b64 = settings.firebase_credentials_json
     project_id = settings.firebase_project_id or "defendraai"
+    storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET")
+    if storage_bucket:
+        storage_bucket = storage_bucket.removeprefix("gs://").strip()
+
+    options = {}
+    if project_id:
+        options["projectId"] = project_id
+    if storage_bucket:
+        options["storageBucket"] = storage_bucket
 
     # Route traffic to emulator when configured, or ensure no stale env var
     # bleeds into cloud mode (an empty FIRESTORE_EMULATOR_HOST causes dns:/// crash).
@@ -50,7 +59,7 @@ def init_firebase() -> None:
             ) from exc
         cred = credentials.Certificate(cred_dict)
         try:
-            firebase_admin.initialize_app(cred, options={"projectId": project_id} if project_id else {})
+            firebase_admin.initialize_app(cred, options=options)
             logger.info("Firebase Admin initialized with inline credentials (project=%s)", project_id)
         except ValueError:
             logger.info("Firebase Admin already initialized")
@@ -79,7 +88,7 @@ def init_firebase() -> None:
             )
         cred = credentials.Certificate(str(path.resolve()))
         try:
-            firebase_admin.initialize_app(cred, options={"projectId": project_id} if project_id else {})
+            firebase_admin.initialize_app(cred, options=options)
             mode = f"emulator at {emulator}" if emulator else "cloud Firestore"
             logger.info("Firebase Admin initialized with service account -> %s", mode)
         except ValueError:
@@ -87,7 +96,7 @@ def init_firebase() -> None:
     elif emulator:
         # Emulator-only mode: no credentials needed, Firebase Admin accepts a project-id-only init.
         try:
-            firebase_admin.initialize_app(options={"projectId": project_id})
+            firebase_admin.initialize_app(options=options)
             logger.info("Firebase Admin using Firestore emulator at %s (project=%s)", emulator, project_id)
         except ValueError:
             logger.info("Firebase Admin already initialized (emulator)")

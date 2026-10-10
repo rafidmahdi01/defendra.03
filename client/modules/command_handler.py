@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from core.api_client import DefendraClient
     from modules.alert_system import AlertSystem
     from modules.backup_manager import BackupManager
+    from modules.isolation_handler import IsolationHandler
 
 logger = logging.getLogger("client.commands")
 
@@ -20,7 +21,7 @@ class CommandHandler:
     """
     Uses fetch_commands() to react to server status or local test commands.
 
-    Supported: isolate, limp_mode, scan, backup
+    Supported: isolate, recover, limp_mode, scan, backup
     """
 
     def __init__(
@@ -28,10 +29,12 @@ class CommandHandler:
         client: DefendraClient,
         alerts: AlertSystem,
         backup: BackupManager,
+        isolation: IsolationHandler,
     ) -> None:
         self.client = client
         self.alerts = alerts
         self.backup = backup
+        self.isolation = isolation
         self.settings = get_settings()
         self._stop = threading.Event()
         self._isolated = False
@@ -56,20 +59,42 @@ class CommandHandler:
             return
 
         if cmd_type == "isolate":
+            # Extract isolation parameters from command payload
+            isolation_type = cmd.get("isolation_type", "network_only")
+            grace_period = cmd.get("grace_period", 10)
+            reason = cmd.get("reason", "Security incident")
+            isolated_by = cmd.get("isolated_by", "admin")
+            
             self._isolated = True
             self._handled.add(key)
-            self.alerts.notify(
-                "Device Isolated",
-                "Admin requested network isolation (simulated).",
-                severity="critical",
-                rule_name="command_handler",
+            
+            # Execute actual isolation via IsolationHandler
+            self.isolation.execute_isolation(
+                isolation_type=isolation_type,
+                grace_period=grace_period,
+                reason=reason,
+                isolated_by=isolated_by,
             )
-            self.client.send_log(
-                "Device isolation command applied",
-                category="command",
-                severity="critical",
-                source="command_handler",
-            )
+
+        elif cmd_type == "recover":
+            self._handled.add(key)
+            logger.critical("RECOVER command received — removing firewall quarantine")
+            ok = self.isolation.execute_recovery()
+            if ok:
+                self._isolated = False
+                self.alerts.notify(
+                    "Device Recovered",
+                    "Firewall quarantine has been removed by admin. Normal connectivity restored.",
+                    severity="info",
+                    rule_name="command_handler",
+                )
+            else:
+                self.alerts.notify(
+                    "Recovery Failed",
+                    "Failed to remove firewall quarantine — manual intervention required.",
+                    severity="critical",
+                    rule_name="command_handler",
+                )
 
         elif cmd_type in ("limp_mode", "limpmode"):
             self._handled.add(key)

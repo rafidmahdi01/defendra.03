@@ -8,7 +8,7 @@ import { useServiceConnected } from "@/hooks/useServiceConnected";
 type LogRow = {
   id: number | string;
   created_at: string;
-  device_id?: number | string;
+  device_id?: number | string | null;
   category?: string;
   severity?: string;
   message: string;

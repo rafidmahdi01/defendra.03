@@ -1,20 +1,21 @@
 """
-Full system scan — runs once on startup, then every 6 hours.
+Full system scan — runs once on startup, then periodically.
 Scans: running processes, startup items, open ports, suspicious files.
-Sends all findings to HuggingFace for AI analysis and reports to the dashboard.
+Sends all findings to AI analysis and reports to the dashboard.
 """
 
 import os
 import socket
 import platform
 import subprocess
-import psutil
+import time
 from datetime import datetime, timezone
+import psutil
+
 from utils.alert_sender import send_alert, log_threat
 from utils.log_sender import send_log
 from utils.ai_analyzer import analyze_threat
 
-# Files/folders to skip during scan
 SKIP_DIRS = {
     "windows", "program files", "program files (x86)",
     "system32", "syswow64", "$recycle.bin", "node_modules",
@@ -27,11 +28,10 @@ SUSPICIOUS_PROCESS_NAMES = {
     "procdump", "netcat", "nc.exe", "nmap", "masscan",
 }
 
-SUSPICIOUS_PORTS = {4444, 1337, 31337, 9001, 9050}  # common RAT/C2 ports
+SUSPICIOUS_PORTS = {4444, 1337, 31337, 9001, 9050}
 
 
 def scan_processes() -> list[dict]:
-    """Scan all running processes for suspicious activity."""
     findings = []
     for proc in psutil.process_iter(["pid", "name", "exe", "username"]):
         try:
@@ -57,7 +57,6 @@ def scan_processes() -> list[dict]:
 
 
 def scan_open_ports() -> list[dict]:
-    """Check for suspicious open network ports."""
     findings = []
     try:
         connections = psutil.net_connections(kind="inet")
@@ -68,13 +67,12 @@ def scan_open_ports() -> list[dict]:
                     "severity": "high",
                     "detail": f"Suspicious port open: {conn.laddr.port} (commonly used by RATs/C2 servers)",
                 })
-    except Exception:
+    except (psutil.AccessDenied, Exception):
         pass
     return findings
 
 
 def scan_startup_items() -> list[dict]:
-    """Check Windows registry startup items for suspicious entries."""
     findings = []
     if platform.system() != "Windows":
         return findings
@@ -91,8 +89,8 @@ def scan_startup_items() -> list[dict]:
             if any(ext in line_lower for ext in [".vbs", ".ps1", ".bat", "\\temp\\"]):
                 findings.append({
                     "type": "suspicious_startup",
-                    "severity": "high",
-                    "detail": f"Suspicious startup entry: {line[:200]}",
+                    "severity": "medium",
+                    "detail": f"Suspicious registry Run entry: {line}",
                 })
     except Exception:
         pass
@@ -100,10 +98,8 @@ def scan_startup_items() -> list[dict]:
 
 
 def scan_temp_files() -> list[dict]:
-    """Scan temp directories for recently created suspicious executable files (last 24h)."""
-    import time
     findings = []
-    cutoff = time.time() - 86400  # only files created in the last 24 hours
+    cutoff = time.time() - 3600
     temp_dirs = [
         os.environ.get("TEMP", ""),
         os.environ.get("TMP", ""),
@@ -136,7 +132,6 @@ def scan_temp_files() -> list[dict]:
 
 
 def get_system_info() -> str:
-    """Gather basic system information for context."""
     try:
         hostname = socket.gethostname()
         os_info = f"{platform.system()} {platform.release()}"
@@ -154,9 +149,7 @@ def get_system_info() -> str:
 
 
 def run_full_scan():
-    """Run a full system scan and report all findings."""
     print(f"[system_scanner] Starting full system scan at {datetime.now(timezone.utc).isoformat()}")
-
     system_info = get_system_info()
     send_log("system_scan", "info", f"Full system scan started. {system_info}", source="system_scanner")
 
@@ -173,19 +166,13 @@ def run_full_scan():
         return
 
     print(f"[system_scanner] Found {len(all_findings)} issue(s). Analyzing...")
-
-    # Group findings by severity and send alerts
     for finding in all_findings:
         detail = finding["detail"]
         threat_type = finding["type"]
         severity = finding["severity"]
-
         log_threat(detail)
-
-        # Get AI analysis + recommendations
         analysis = analyze_threat(threat_type, detail)
         full_description = f"{detail}\n\nAI Recommendations:\n{analysis['ai_suggestion']}"
-
         send_alert(threat_type, severity, full_description)
         send_log("system_scan", severity, detail, source="system_scanner")
 
@@ -195,8 +182,7 @@ def run_full_scan():
 
 
 def run_system_scanner(interval_hours: int = 6):
-    """Run full scan on startup then repeat every interval_hours."""
-    import time
     while True:
         run_full_scan()
         time.sleep(interval_hours * 3600)
+

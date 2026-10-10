@@ -11,6 +11,9 @@ import {
   MapPin,
   ChevronDown,
   Trash2,
+  AlertTriangle,
+  Clock,
+  Shield,
 } from "lucide-react";
 
 import { GlassCard } from "@/components/defendra/Card";
@@ -34,6 +37,17 @@ type Device = {
   user_email?: string;
   user_full_name?: string;
   user_name?: string;
+  // Isolation fields
+  isolated_at?: string | null;
+  isolated_by_user_id?: string | null;
+  isolated_by_email?: string | null;
+  isolation_reason?: string | null;
+  isolation_type?: string | null;
+  isolation_grace_period?: number | null;
+  can_auto_recover?: boolean;
+  recovered_at?: string | null;
+  recovered_by_user_id?: string | null;
+  recovered_by_email?: string | null;
 };
 
 const STATUS_OPTIONS = ["All", "Online", "Offline", "Isolated", "LimpMode"];
@@ -41,7 +55,7 @@ const DEVICES_VIEW_KEY = "devices";
 
 export default function DevicesPage() {
   const { connected } = useServiceConnected();
-  const { isAdmin, displayName } = useCurrentUser();
+  const { isAdmin, displayName, user } = useCurrentUser();
   const [devices, setDevices]       = useState<Device[]>([]);
   const [cleared, setCleared]       = useState(() => isViewCleared(DEVICES_VIEW_KEY));
   const [search, setSearch]         = useState("");
@@ -52,6 +66,17 @@ export default function DevicesPage() {
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [deletingAll, setDeletingAll] = useState(false);
+  const [isolationConfig, setIsolationConfig] = useState<{
+    device: Device | null;
+    type: "network_only" | "full_shutdown";
+    gracePeriod: number;
+    reason: string;
+  }>({
+    device: null,
+    type: "network_only",
+    gracePeriod: 30,
+    reason: "",
+  });
 
   const load = async () => {
     try {
@@ -124,6 +149,57 @@ export default function DevicesPage() {
       );
     } catch {
       setActionError("Could not update device status. Try again.");
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const openIsolationModal = (device: Device) => {
+    setIsolationConfig({
+      device,
+      type: "network_only",
+      gracePeriod: 30,
+      reason: "",
+    });
+  };
+
+  const closeIsolationModal = () => {
+    setIsolationConfig({
+      device: null,
+      type: "network_only",
+      gracePeriod: 30,
+      reason: "",
+    });
+  };
+
+  const executeIsolation = async () => {
+    if (!connected || !isolationConfig.device) return;
+    setActionBusyId(String(isolationConfig.device.id));
+    setActionError("");
+    try {
+      await api.put(`/devices/${isolationConfig.device.id}/isolate`, {
+        isolation_type: isolationConfig.type,
+        grace_period: isolationConfig.gracePeriod,
+        reason: isolationConfig.reason || "Security incident",
+      });
+      await load();
+      closeIsolationModal();
+    } catch (err: any) {
+      setActionError(err.response?.data?.detail || "Could not isolate device. Try again.");
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const recoverDevice = async (device: Device) => {
+    if (!connected) return;
+    setActionBusyId(String(device.id));
+    setActionError("");
+    try {
+      await api.put(`/devices/${device.id}/recover`);
+      await load();
+    } catch (err: any) {
+      setActionError(err.response?.data?.detail || "Could not recover device. Try again.");
     } finally {
       setActionBusyId(null);
     }
@@ -334,8 +410,8 @@ export default function DevicesPage() {
                         controlsEnabled={connected}
                         busy={actionBusyId === String(d.id)}
                         onView={() => setSelectedDevice(d)}
-                        onIsolate={() => updateDeviceStatus(d, "isolated")}
-                        onRecover={() => updateDeviceStatus(d, "online")}
+                        onIsolate={() => openIsolationModal(d)}
+                        onRecover={() => recoverDevice(d)}
                       />
                     </Td>
                   </tr>
@@ -349,10 +425,23 @@ export default function DevicesPage() {
       {selectedDevice ? (
         <DeviceDetailModal
           device={selectedDevice}
+          currentUser={{ ...user, isAdmin }}
           busy={actionBusyId === String(selectedDevice.id)}
           onClose={() => setSelectedDevice(null)}
-          onIsolate={() => updateDeviceStatus(selectedDevice, "isolated")}
-          onRecover={() => updateDeviceStatus(selectedDevice, "online")}
+          onIsolate={() => openIsolationModal(selectedDevice)}
+          onRecover={() => recoverDevice(selectedDevice)}
+        />
+      ) : null}
+
+      {isolationConfig.device ? (
+        <IsolationConfigModal
+          device={isolationConfig.device}
+          config={isolationConfig}
+          busy={actionBusyId === String(isolationConfig.device.id)}
+          error={actionError}
+          onClose={closeIsolationModal}
+          onConfigChange={(updates) => setIsolationConfig({ ...isolationConfig, ...updates })}
+          onExecute={executeIsolation}
         />
       ) : null}
     </div>
@@ -472,12 +561,14 @@ function ActionButtons({
 
 function DeviceDetailModal({
   device,
+  currentUser,
   busy,
   onClose,
   onIsolate,
   onRecover,
 }: {
   device: Device;
+  currentUser: { id?: string; isAdmin?: boolean };
   busy: boolean;
   onClose: () => void;
   onIsolate: () => void;
@@ -543,7 +634,7 @@ function DeviceDetailModal({
           >
             Close
           </button>
-          {s === "online" ? (
+          {s === "online" && !device.isolated_at && (currentUser.isAdmin || device.user_id !== currentUser.id) ? (
             <button
               type="button"
               disabled={busy}
@@ -554,7 +645,7 @@ function DeviceDetailModal({
               {busy ? "Isolating…" : "Isolate Device"}
             </button>
           ) : null}
-          {(s === "isolated" || s === "limpmode") ? (
+          {device.isolated_at && !device.recovered_at ? (
             <button
               type="button"
               disabled={busy}
@@ -592,6 +683,179 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2">
       <dt className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</dt>
       <dd className="mt-1 break-all font-medium">{value}</dd>
+    </div>
+  );
+}
+
+function IsolationConfigModal({
+  device,
+  config,
+  busy,
+  error,
+  onClose,
+  onConfigChange,
+  onExecute,
+}: {
+  device: Device;
+  config: {
+    type: "network_only" | "full_shutdown";
+    gracePeriod: number;
+    reason: string;
+  };
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onConfigChange: (updates: Partial<typeof config>) => void;
+  onExecute: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Close isolation config"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="glass relative z-10 w-full max-w-lg rounded-3xl p-6 ring-1 ring-white/10">
+        <div className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-semibold">
+              <Shield className="h-5 w-5 text-[var(--warning)]" />
+              Isolate Device
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Configure isolation settings for <span className="font-semibold text-foreground">{device.hostname}</span>
+            </p>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-xs text-[var(--danger)]">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {/* Isolation Type */}
+          <div>
+            <label className="mb-2 block text-xs font-medium text-muted-foreground">
+              Isolation Type
+            </label>
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => onConfigChange({ type: "network_only" })}
+                className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${
+                  config.type === "network_only"
+                    ? "border-[var(--mint)]/50 bg-[var(--mint)]/10 ring-1 ring-[var(--mint)]/30"
+                    : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10"
+                }`}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                      config.type === "network_only" ? "border-[var(--mint)]" : "border-white/30"
+                    }`}>
+                      {config.type === "network_only" && (
+                        <div className="h-2 w-2 rounded-full bg-[var(--mint)]" />
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold">Network Isolation Only</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Disable all network interfaces. Device remains running but disconnected.
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onConfigChange({ type: "full_shutdown" })}
+                className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${
+                  config.type === "full_shutdown"
+                    ? "border-[var(--danger)]/50 bg-[var(--danger)]/10 ring-1 ring-[var(--danger)]/30"
+                    : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10"
+                }`}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                      config.type === "full_shutdown" ? "border-[var(--danger)]" : "border-white/30"
+                    }`}>
+                      {config.type === "full_shutdown" && (
+                        <div className="h-2 w-2 rounded-full bg-[var(--danger)]" />
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold">Full Shutdown</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Disconnect network, terminate processes, and shut down the system.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Grace Period */}
+          <div>
+            <label className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />
+              Grace Period (seconds)
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="300"
+              value={config.gracePeriod}
+              onChange={(e) => onConfigChange({ gracePeriod: Math.max(0, Math.min(300, Number(e.target.value))) })}
+              className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm focus:border-[var(--mint)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--mint)]/20"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Time before isolation takes effect. User will see countdown notifications.
+            </p>
+          </div>
+
+          {/* Reason */}
+          <div>
+            <label className="mb-2 block text-xs font-medium text-muted-foreground">
+              Reason (optional)
+            </label>
+            <textarea
+              value={config.reason}
+              onChange={(e) => onConfigChange({ reason: e.target.value })}
+              placeholder="e.g., Suspected malware infection, unauthorized access attempt..."
+              rows={3}
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm focus:border-[var(--mint)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--mint)]/20 resize-none"
+            />
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-xl border border-white/10 px-4 py-2 text-xs font-medium text-muted-foreground transition hover:bg-white/5 hover:text-foreground disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onExecute}
+            disabled={busy}
+            className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold ring-1 transition disabled:opacity-50 ${
+              config.type === "full_shutdown"
+                ? "bg-[var(--danger)]/15 text-[var(--danger)] ring-[var(--danger)]/30 hover:bg-[var(--danger)]/25"
+                : "bg-[var(--warning)]/15 text-[var(--warning)] ring-[var(--warning)]/30 hover:bg-[var(--warning)]/25"
+            }`}
+          >
+            <ShieldOff className="h-3.5 w-3.5" />
+            {busy ? "Isolating..." : `Isolate Device ${config.gracePeriod > 0 ? `(${config.gracePeriod}s)` : "Now"}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

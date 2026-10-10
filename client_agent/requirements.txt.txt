@@ -1,8 +1,0 @@
-imaplib2
-watchdog
-psutil
-pywin32
-requests
-python-dotenv
-pyclamd
-google-generativeai

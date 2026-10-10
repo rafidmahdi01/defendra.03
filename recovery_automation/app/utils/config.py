@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     """Application settings with sensible defaults for local development."""
 
     model_config = SettingsConfigDict(
-        env_file=MODULE_ROOT / ".env",
+        env_file=(MODULE_ROOT / ".env", MODULE_ROOT.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )

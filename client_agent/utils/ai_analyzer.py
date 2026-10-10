@@ -1,10 +1,10 @@
 import os
 import re
-from dotenv import load_dotenv
 
-load_dotenv()
+from utils.config import load_all_configs
 
-HUGGINGFACE_API_KEY = (os.getenv("HUGGINGFACE_API_KEY") or "").strip()
+load_all_configs()
+
 HUGGINGFACE_MODEL = "HuggingFaceH4/zephyr-7b-beta"
 
 _PLACEHOLDER_HF_KEYS = {
@@ -15,15 +15,18 @@ _PLACEHOLDER_HF_KEYS = {
 }
 
 
-def huggingface_configured() -> bool:
-    """True when a real Hugging Face token is set (not a template placeholder)."""
-    if HUGGINGFACE_API_KEY in _PLACEHOLDER_HF_KEYS:
-        return False
-    if HUGGINGFACE_API_KEY.startswith("your_"):
-        return False
-    return len(HUGGINGFACE_API_KEY) >= 10
+def get_hf_key() -> str:
+    return (os.getenv("HUGGINGFACE_API_KEY") or "").strip()
 
-# ── Rule-based phishing keywords ─────────────────────────────────────────────
+
+def huggingface_configured() -> bool:
+    key = get_hf_key()
+    if key in _PLACEHOLDER_HF_KEYS:
+        return False
+    if key.startswith("your_"):
+        return False
+    return len(key) >= 10
+
 
 PHISHING_KEYWORDS = [
     "verify your account", "confirm your password", "click here to login",
@@ -42,8 +45,6 @@ PHISHING_PATTERNS = [
     r"(verify|confirm|validate).{0,30}(account|identity|email|password)",
     r"(suspend|terminat|clos).{0,20}account",
 ]
-
-# ── Rule-based threat suggestions (instant fallback) ─────────────────────────
 
 THREAT_SUGGESTIONS = {
     "usb_threat": [
@@ -83,15 +84,12 @@ THREAT_SUGGESTIONS = {
 }
 
 
-# ── AI-powered analysis via Hugging Face ─────────────────────────────────────
-
 def _call_huggingface(prompt: str) -> str | None:
-    """Call HuggingFace inference API and return text or None on failure."""
     if not huggingface_configured():
         return None
     try:
         from huggingface_hub import InferenceClient
-        client = InferenceClient(token=HUGGINGFACE_API_KEY)
+        client = InferenceClient(token=get_hf_key())
         response = client.chat.completions.create(
             model=HUGGINGFACE_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -100,17 +98,11 @@ def _call_huggingface(prompt: str) -> str | None:
         )
         return response.choices[0].message.content.strip()
     except Exception:
-        # Silently fall back to rule-based analysis
         return None
 
 
 def analyze_threat(threat_type: str, details: str) -> dict:
-    """
-    Analyze a detected threat and return AI suggestions.
-    Falls back to rule-based suggestions if API is unavailable.
-    """
     fallback_suggestions = THREAT_SUGGESTIONS.get(threat_type, THREAT_SUGGESTIONS["default"])
-
     prompt = f"""You are a cybersecurity expert assistant for Defendra, a cyber resilience platform.
 
 A security threat has been detected on an endpoint device:
@@ -125,7 +117,6 @@ Provide a clear, concise response with:
 Keep it short and direct. No markdown headers."""
 
     ai_response = _call_huggingface(prompt)
-
     if ai_response:
         return {
             "threat_type": threat_type,
@@ -133,25 +124,20 @@ Keep it short and direct. No markdown headers."""
             "ai_suggestion": ai_response,
             "source": "ai",
         }
-    else:
-        return {
-            "threat_type": threat_type,
-            "details": details,
-            "ai_suggestion": "\n".join(f"• {s}" for s in fallback_suggestions),
-            "source": "rules",
-        }
+    return {
+        "threat_type": threat_type,
+        "details": details,
+        "ai_suggestion": "\n".join(f"• {s}" for s in fallback_suggestions),
+        "source": "rules",
+    }
 
 
 def analyze_email_with_ai(subject: str, body: str) -> dict:
-    """
-    Analyze email for phishing using rules first, then AI if available.
-    """
     text = f"{subject} {body}".lower()
     matched_keywords = [kw for kw in PHISHING_KEYWORDS if kw in text]
     matched_patterns = [p for p in PHISHING_PATTERNS if re.search(p, text, re.IGNORECASE)]
     total_signals = len(matched_keywords) + len(matched_patterns)
 
-    # Use AI for deeper analysis if we have signals
     if total_signals > 0 and huggingface_configured():
         prompt = f"""You are a cybersecurity expert. Analyze this email for phishing.
 
@@ -160,19 +146,17 @@ Body: {body[:500]}
 
 Respond ONLY with valid JSON (no markdown):
 {{"is_phishing": true/false, "confidence": 0-100, "reason": "one sentence explanation"}}"""
-
         ai_text = _call_huggingface(prompt)
         if ai_text:
             try:
                 import json
                 clean = re.sub(r"```[a-z]*", "", ai_text).strip().rstrip("`").strip()
                 parsed = json.loads(clean)
+                if parsed:
+                    return parsed
             except Exception:
-                parsed = None
-            if parsed:
-                return parsed
+                pass
 
-    # Rule-based fallback
     if total_signals >= 3:
         confidence = min(95, 60 + total_signals * 5)
         reason = f"Matched {total_signals} phishing signals: {', '.join(matched_keywords[:3])}"
@@ -184,5 +168,4 @@ Respond ONLY with valid JSON (no markdown):
             "reason": f"Possible phishing — matched: {', '.join(matched_keywords[:2])}",
             "source": "rules",
         }
-    else:
-        return {"is_phishing": False, "confidence": 5, "reason": "No phishing signals detected", "source": "rules"}
+    return {"is_phishing": False, "confidence": 5, "reason": "No phishing signals detected", "source": "rules"}

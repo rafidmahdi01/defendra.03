@@ -4,8 +4,27 @@ set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
+:: Check for administrator privileges
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ============================================
+    echo   Administrator privileges required
+    echo ============================================
+    echo.
+    echo This script needs to run as Administrator to:
+    echo   - Kill leftover processes on ports 8000, 8001, 5173
+    echo   - Start client agent services
+    echo   - Access system resources
+    echo.
+    echo Please right-click start.bat and select "Run as administrator"
+    echo.
+    pause
+    exit /b 1
+)
+
 echo ============================================
 echo   Defendra.AI - Starting all services
+echo   Running with Administrator privileges
 echo ============================================
 
 :: Pre-flight checks
@@ -21,20 +40,6 @@ if errorlevel 1 (
     echo ERROR: Node.js not found. Install Node.js LTS and try again.
     pause
     exit /b 1
-)
-
-:: Auto-setup: env files
-if not exist "%ROOT%\backend\.env" (
-    echo Creating backend\.env from .env.example ...
-    copy /Y "%ROOT%\backend\.env.example" "%ROOT%\backend\.env"
-)
-if not exist "%ROOT%\client\.env" (
-    echo Creating client\.env from .env.example ...
-    copy /Y "%ROOT%\client\.env.example" "%ROOT%\client\.env"
-)
-if not exist "%ROOT%\recovery_automation\.env" (
-    echo Creating recovery_automation\.env from .env.example ...
-    copy /Y "%ROOT%\recovery_automation\.env.example" "%ROOT%\recovery_automation\.env"
 )
 
 :: Auto-setup: Python venv (backend)

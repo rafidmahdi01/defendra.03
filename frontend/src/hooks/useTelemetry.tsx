@@ -27,7 +27,7 @@ export type RealAlert = {
 
 export type RealLog = {
   id: string;
-  device_id: string;
+  device_id: string | null;
   category: string;
   severity: string;
   source?: string | null;

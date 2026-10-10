@@ -34,8 +34,9 @@ def _doc_to_read(log: LogDoc) -> LogRead:
 
 @router.post("", response_model=LogRead, status_code=status.HTTP_201_CREATED)
 async def create_log(payload: LogCreate, db: Client = Depends(get_firestore)):
-    if not db.collection("devices").document(payload.device_id).get().exists:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if payload.device_id:
+        if not db.collection("devices").document(payload.device_id).get().exists:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
     now = datetime.now(timezone.utc)
     ref = db.collection("logs").document()

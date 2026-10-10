@@ -443,9 +443,18 @@ async def request_otp(
         "used": False,
     })
     
-    # TODO: In production, send OTP via email using SMTP
-    # For now, log it (in dev) or simulate sending
-    print(f"[auth] OTP for {email}: {otp_code} (expires in 5 minutes)")
+    from utils.alert_sender import send_otp_email
+    
+    # For local testing and development, print the OTP code to the terminal console
+    print(f"\n[{'='*40}]\n[LOCAL TEST] OTP for {email}: {otp_code}\n[{'='*40}]\n", flush=True)
+    import logging
+    logging.getLogger(__name__).info(f"Generated OTP for {email}: {otp_code} (expires in 5 minutes)")
+
+    # Send OTP via email using SendGrid SMTP
+    success = send_otp_email(to_email=email, otp_code=otp_code, user_name=user.full_name)
+    if not success:
+        # Fallback to local printing if email fails or SMTP_PASSWORD is not set
+        print(f"[auth-fallback] OTP for {email}: {otp_code} (expires in 5 minutes)", flush=True)
     
     record_audit(db, "auth.request_otp", user=user, request=request)
     
@@ -518,6 +527,32 @@ async def login(
 
     token = create_access_token(user.id, {"role": user.role})
     record_audit(db, "auth.login", user=user, request=request)
+
+    # Write a log entry so the login appears in the Security Logs page
+    log_ref = db.collection("logs").document()
+    log_ref.set(
+        {
+            "device_id": None,
+            "category": "auth",
+            "severity": "info",
+            "source": "auth",
+            "message": f"User {user.full_name} ({user.email}) logged in"
+                       + (f" from {ip_address}" if ip_address else ""),
+            "raw_payload": {
+                "user_id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "role": user.role,
+                "ip_address": ip_address,
+            },
+            "created_at": now,
+        }
+    )
+
+    await manager.broadcast(
+        "log.created",
+        {"id": log_ref.id, "device_id": None, "severity": "info"},
+    )
     await manager.broadcast(
         "user.login",
         {
@@ -540,10 +575,36 @@ async def logout(
     current_user: UserDoc = Depends(get_current_user),
 ):
     now = datetime.now(timezone.utc)
+    ip_address = request.client.host if request.client else None
     db.collection("users").document(current_user.id).update(
         {"is_online": False, "updated_at": now}
     )
     record_audit(db, "auth.logout", user=current_user, request=request)
+
+    # Write a log entry so the logout appears in the Security Logs page
+    logout_log_ref = db.collection("logs").document()
+    logout_log_ref.set(
+        {
+            "device_id": None,
+            "category": "auth",
+            "severity": "info",
+            "source": "auth",
+            "message": f"User {current_user.full_name} ({current_user.email}) logged out",
+            "raw_payload": {
+                "user_id": current_user.id,
+                "email": current_user.email,
+                "full_name": current_user.full_name,
+                "role": current_user.role,
+                "ip_address": ip_address,
+            },
+            "created_at": now,
+        }
+    )
+
+    await manager.broadcast(
+        "log.created",
+        {"id": logout_log_ref.id, "device_id": None, "severity": "info"},
+    )
     await manager.broadcast(
         "user.logout",
         {

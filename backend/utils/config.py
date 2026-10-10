@@ -1,16 +1,27 @@
+import os
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve `.env` from the backend package root so Firebase/JWT load correctly even when
 # uvicorn's cwd is not `backend/` (common when launching from IDEs or process managers).
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ROOT_ENV = _BACKEND_DIR.parent / ".env"
+_BACKEND_ENV = _BACKEND_DIR / ".env"
 _CLIENT_AGENT_ENV = _BACKEND_DIR.parent / "client_agent" / ".env"
 
+# Explicitly load .env files into os.environ for os.getenv compatibility
+if _ROOT_ENV.is_file():
+    load_dotenv(dotenv_path=_ROOT_ENV)
+if _BACKEND_ENV.is_file():
+    load_dotenv(dotenv_path=_BACKEND_ENV)
+
 _ENV_FILES: tuple[str, ...] = (
-    str(_BACKEND_DIR / ".env"),
+    str(_ROOT_ENV),
+    str(_BACKEND_ENV),
     *(
         (str(_CLIENT_AGENT_ENV.resolve()),)
         if _CLIENT_AGENT_ENV.is_file()
@@ -56,7 +67,32 @@ class Settings(BaseSettings):
             return ""
         return v.strip().strip('"').strip("'")
 
-    jwt_secret_key: str = "change-this-secret-before-production"
+    # Strictly required JWT Secret Key from .env
+    fastapi_jwt_secret: str = Field(
+        ...,
+        alias="FASTAPI_JWT_SECRET",
+        description="Mandatory JWT secret key loaded from .env. Crashes server startup if missing.",
+    )
+
+    @field_validator("fastapi_jwt_secret", mode="after")
+    @classmethod
+    def validate_fastapi_jwt_secret(cls, v: str) -> str:
+        secret = (v or "").strip().strip('"').strip("'")
+        if not secret:
+            secret = (os.getenv("FASTAPI_JWT_SECRET") or "").strip().strip('"').strip("'")
+        if not secret:
+            raise ValueError(
+                "FASTAPI_JWT_SECRET is missing or empty in .env. "
+                "The FastAPI server strictly requires a 32-character random string configured "
+                "for FASTAPI_JWT_SECRET in your .env file to boot."
+            )
+        return secret
+
+    @property
+    def jwt_secret_key(self) -> str:
+        """Alias property to maintain compatibility with auth security modules."""
+        return self.fastapi_jwt_secret
+
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
@@ -64,15 +100,43 @@ class Settings(BaseSettings):
     heartbeat_timeout_seconds: int = 120
     log_export_limit: int = 10000
 
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    notification_from_email: str = "alerts@example.com"
+    # SendGrid SMTP Configuration — hardcoded defaults with SMTP_PASSWORD loaded from .env
+    smtp_host: str = Field(
+        default="smtp.sendgrid.net",
+        alias="SMTP_HOST",
+        description="Hardcoded SendGrid SMTP host",
+    )
+    smtp_port: int = Field(
+        default=587,
+        alias="SMTP_PORT",
+        description="Hardcoded SendGrid SMTP TLS port",
+    )
+    smtp_user: str = Field(
+        default="apikey",
+        alias="SMTP_USER",
+        description="Hardcoded SendGrid SMTP username",
+    )
+    smtp_password: str = Field(
+        default="",
+        alias="SMTP_PASSWORD",
+        description="SendGrid SMTP API key loaded directly from .env",
+    )
+    notification_from_email: str = Field(
+        default="ceo@technohavenmalaysia.com",
+        alias="NOTIFICATION_FROM_EMAIL",
+        description="SendGrid verified sender email",
+    )
 
-    # Hugging Face Inference API — used by Sentinel chat in the dashboard
+    # API Keys loaded directly from .env
+    virustotal_api_key: str = Field(
+        default="",
+        alias="VIRUSTOTAL_API_KEY",
+        description="VirusTotal API key loaded directly from .env",
+    )
     huggingface_api_key: str = Field(
-        default="", description="Access token from https://huggingface.co/settings/tokens."
+        default="",
+        alias="HUGGINGFACE_API_KEY",
+        description="Access token from https://huggingface.co/settings/tokens loaded directly from .env",
     )
     huggingface_model: str = Field(
         default="Qwen/Qwen2.5-7B-Instruct",
@@ -96,6 +160,23 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> List[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    # Compatibility properties for uppercase access
+    @property
+    def SMTP_PASSWORD(self) -> str:
+        return self.smtp_password
+
+    @property
+    def VIRUSTOTAL_API_KEY(self) -> str:
+        return self.virustotal_api_key
+
+    @property
+    def HUGGINGFACE_API_KEY(self) -> str:
+        return self.huggingface_api_key
+
+    @property
+    def FASTAPI_JWT_SECRET(self) -> str:
+        return self.fastapi_jwt_secret
 
 
 def get_settings() -> Settings:

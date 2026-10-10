@@ -33,7 +33,7 @@ class FirebaseStorageClient:
     def enabled(self) -> bool:
         """Check if Firebase credentials are configured."""
         sa_json = self.settings.firebase_service_account_json.strip()
-        bucket = self.settings.firebase_storage_bucket.strip()
+        bucket = self.settings.firebase_storage_bucket.removeprefix("gs://").strip()
         return bool(sa_json) and bool(bucket)
 
     def _get_bucket(self) -> Any:
@@ -60,7 +60,7 @@ class FirebaseStorageClient:
         except ValueError:
             # Initialize new app
             service_account_source = self.settings.firebase_service_account_json.strip()
-            bucket_name = self.settings.firebase_storage_bucket.strip()
+            bucket_name = self.settings.firebase_storage_bucket.removeprefix("gs://").strip()
 
             # Load credentials from file or raw JSON
             if service_account_source.startswith("{"):

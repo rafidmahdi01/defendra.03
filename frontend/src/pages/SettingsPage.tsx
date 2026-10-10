@@ -716,6 +716,7 @@ export default function SettingsPage() {
 
         <div className="mx-auto grid max-w-4xl grid-cols-1 gap-4 md:grid-cols-2">
           <SecurityPoliciesCard policies={policies} onToggle={toggle} />
+          {isAdmin && <IntegrationsSettingsCard />}
           <ConnectivityCard online={online} pending={pending} />
         </div>
       </div>
@@ -872,5 +873,69 @@ function ActivitySection({
         <p className="text-xs text-muted-foreground">{empty}</p>
       )}
     </div>
+  );
+}
+
+export function IntegrationsSettingsCard() {
+  const [keys, setKeys] = useState({
+    VIRUSTOTAL_API_KEY: "",
+    HUGGINGFACE_API_KEY: "",
+    SMTP_PASSWORD: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
+
+  useEffect(() => {
+    api.get("/settings/integrations")
+      .then(({ data }) => setKeys((prev) => ({ ...prev, ...data })))
+      .catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setStatusMsg("");
+    try {
+      await api.put("/settings/integrations", keys);
+      setStatusMsg("Settings saved successfully.");
+    } catch {
+      setStatusMsg("Failed to save integration settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <GlassCard
+      title="AI & Third-Party Integrations"
+      subtitle="Configure external threat intelligence, AI engines, and email notifications"
+      icon={<KeyRound className="h-4 w-4 text-[var(--cyan)]" />}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Object.entries(keys).map(([key, val]) => (
+          <div key={key} className="space-y-1">
+            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {key.replace(/_/g, " ")}
+            </label>
+            <input
+              type="password"
+              value={val as string}
+              onChange={(e) => setKeys({ ...keys, [key]: e.target.value })}
+              className="h-9 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-xs placeholder:text-muted-foreground/60 focus:border-[var(--mint)]/50 focus:outline-none"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{statusMsg}</span>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 rounded-xl bg-gradient-cyber px-4 py-2 text-xs font-semibold text-black transition hover:brightness-110 disabled:opacity-40"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {saving ? "Saving..." : "Save Settings"}
+        </button>
+      </div>
+    </GlassCard>
   );
 }

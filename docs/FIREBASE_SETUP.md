@@ -1,6 +1,6 @@
-# Firebase Setup Guide for Defendra.AI Demo
+# Firebase Setup Guide for Defendra.AI
 
-This guide walks you through setting up Firebase/Firestore for the Defendra.AI demo deployment on Render.com.
+This guide covers Firebase/Firestore setup for Defendra.AI, including Firestore database for application data and Firebase Storage for backup files.
 
 ## Prerequisites
 - Google account
@@ -81,9 +81,71 @@ base64 -i firebase-key.json
 2. Copy the **"Project ID"** (e.g., `defendra-demo-12345`)
 3. Save this - you'll need it for Render deployment
 
-## Step 6: Deploy to Render
+## Step 6: Configure Firebase Storage for Backups
 
-Now you're ready to deploy using the Blueprint:
+Firebase Storage is used for automatic backup uploads.
+
+1. In Firebase Console, click **"Build"** → **"Storage"**
+2. Click **"Get started"**
+3. Select **"Start in production mode"**
+4. Choose same location as Firestore
+5. Click **"Done"**
+
+### Configure Storage Rules
+
+1. Click the **"Rules"** tab
+2. Replace with:
+
+```javascript
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow authenticated access to backups
+    match /backups/{deviceId}/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+
+3. Click **"Publish"**
+
+## Step 7: Configure Local Environment
+
+### For Recovery Automation Service:
+
+Edit `recovery_automation/.env`:
+
+```env
+# Firebase Storage
+FIREBASE_SERVICE_ACCOUNT_JSON=C:\path\to\firebase-key.json
+FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
+
+# Optional: AWS S3 (if using S3 as well)
+AWS_ACCESS_KEY_ID=your_aws_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret
+AWS_BUCKET_NAME=defendra-backups
+AWS_REGION=us-east-1
+```
+
+### Test Firebase Configuration:
+
+```bash
+cd recovery_automation
+python test_firebase_simple.py
+```
+
+**Expected output:**
+```
+✓ FIREBASE_SERVICE_ACCOUNT_JSON: C:\...\firebase-key.json
+✓ FIREBASE_STORAGE_BUCKET: your-project-id.firebasestorage.app
+✓ Firebase app initialized
+✓ Firebase is properly configured and SDK works!
+```
+
+## Step 8: Deploy to Render (Optional)
+
+For cloud deployment using Render:
 
 1. Push your code (with updated `render.yaml`) to GitHub
 2. Go to [Render Dashboard](https://dashboard.render.com/blueprints)

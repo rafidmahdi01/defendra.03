@@ -2,15 +2,17 @@
 Backup system: ZIP compression, local storage, Firebase + optional S3, scheduled jobs.
 
 Auto-detects device_id from system hostname if not provided.
+Includes enterprise data filters (file size limits, extension blocklists, and system directory exclusions).
 """
 
+import os
 import platform
 import zipfile
 from pathlib import Path
 from typing import Any
 
 from app.integrations.firebase_client import FirebaseStorageClient
-from app.integrations.s3_client import S3BackupClient
+from app.integrations.firebase_storage import FirebaseBackupClient
 from app.utils.config import get_settings
 from app.utils.helper import (
     archive_path,
@@ -24,13 +26,171 @@ from app.utils.logger import get_logger
 
 logger = get_logger("backup_service")
 
+# ---------------------------------------------------------------------------
+# Enterprise Backup Filtering Constants
+# ---------------------------------------------------------------------------
+
+MAX_FILE_SIZE_MB: int = 50
+MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
+
+# Set of extensions to ignore heavy, non-essential, or temporary files
+BLOCKED_EXTENSIONS: set[str] = {
+    # Heavy media files
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v",
+    ".mp3",
+    ".wav",
+    # Disk images & virtual machines
+    ".iso",
+    ".img",
+    ".vmdk",
+    ".vhd",
+    ".vhdx",
+    ".qcow2",
+    ".dmg",
+    # Executables, binaries & system installers
+    ".exe",
+    ".dll",
+    ".sys",
+    ".msi",
+    ".cab",
+    ".com",
+    ".scr",
+    ".bat",
+    ".cmd",
+    # Outlook data, temporary files, swap & crash dumps
+    ".ost",
+    ".pst",
+    ".tmp",
+    ".temp",
+    ".bak",
+    ".swp",
+    ".dmp",
+    ".log",
+}
+
+# System directories and hidden folders explicitly excluded from backups
+EXCLUDED_DIR_NAMES: set[str] = {
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "appdata",
+    "application data",
+    "local settings",
+    "$recycle.bin",
+    "system volume information",
+    "recycler",
+    "winnt",
+    "temp",
+    "tmp",
+}
+
+# Linux/Unix system root paths to exclude if running on POSIX systems
+EXCLUDED_POSIX_ROOTS: tuple[str, ...] = (
+    "/proc",
+    "/sys",
+    "/dev",
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/var/log",
+    "/tmp",
+)
+
+
+def is_excluded_directory(dir_path: Path) -> bool:
+    """
+    Check if a directory path should be excluded based on system directory names,
+    hidden AppData folders, dot-prefixed hidden directories, or POSIX system roots.
+    """
+    try:
+        path_str = str(dir_path).replace("\\", "/")
+
+        # POSIX system path check
+        for posix_root in EXCLUDED_POSIX_ROOTS:
+            if path_str == posix_root or path_str.startswith(posix_root + "/"):
+                return True
+
+        for part in dir_path.parts:
+            part_lower = part.lower().strip()
+            # Skip root drive specifiers like 'C:\' or '/'
+            if not part_lower or part_lower.endswith(":") or part_lower == "/":
+                continue
+
+            # Explicitly exclude known system and temp directory names (e.g. C:\Windows, Program Files, AppData)
+            if part_lower in EXCLUDED_DIR_NAMES:
+                return True
+
+            # Exclude hidden directories (starting with '.', e.g. .git, .cache, .vscode)
+            if part_lower.startswith(".") and len(part_lower) > 1 and not part_lower.startswith(".."):
+                return True
+
+        return False
+    except Exception as exc:
+        logger.warning("Error checking exclusion for directory %s: %s", dir_path, exc)
+        return True  # Exclude on error for safety
+
+
+def should_include_file(file_path: Path) -> bool:
+    """
+    Validate whether an individual file should be included in the backup ZIP archive.
+
+    Filters enforced:
+    1. Parent directory exclusions (C:\\Windows, Program Files, hidden AppData, etc.)
+    2. Extension Blocklist (.mp4, .iso, .exe, .ost, .tmp, etc.)
+    3. File Size Limit (MAX_FILE_SIZE_MB = 50MB)
+    4. Safe file attribute stat check (prevents OS-level permission crashes)
+    """
+    try:
+        # 1. Check if containing directory or any parent is excluded
+        if is_excluded_directory(file_path.parent):
+            logger.debug("Skipping file in excluded directory path: %s", file_path)
+            return False
+
+        # 2. Check Extension Blocklist
+        ext = file_path.suffix.lower()
+        if ext in BLOCKED_EXTENSIONS:
+            logger.info("Skipping file with blocked extension '%s': %s", ext, file_path)
+            return False
+
+        # 3. Check File Size Limit with exception guard against locked/unreadable files
+        try:
+            file_size = file_path.stat().st_size
+        except (PermissionError, OSError) as perm_err:
+            logger.warning("Skipping locked or unreadable file %s: %s", file_path, perm_err)
+            return False
+
+        if file_size > MAX_FILE_SIZE_BYTES:
+            size_mb = file_size / (1024 * 1024)
+            logger.info(
+                "Skipping large file (%s, size: %.2f MB > %d MB limit)",
+                file_path.name,
+                size_mb,
+                MAX_FILE_SIZE_MB,
+            )
+            return False
+
+        return True
+
+    except Exception as exc:
+        logger.warning("Skipping file due to unexpected error during inspection %s: %s", file_path, exc)
+        return False
+
 
 class BackupService:
     """Create and list compressed backups."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.s3 = S3BackupClient()
+        self.s3 = FirebaseBackupClient()
         self.firebase = FirebaseStorageClient()
         self.settings.backup_root_path.mkdir(parents=True, exist_ok=True)
 
@@ -105,18 +265,65 @@ class BackupService:
         zip_path = archive_path(backup_id)
         file_count = 0
 
+        def _on_walk_error(error: OSError) -> None:
+            logger.warning(
+                "Permission or OS error accessing directory %s: %s",
+                getattr(error, "filename", "unknown"),
+                error,
+            )
+
         logger.info("Creating backup %s from %d path(s) for device: %s", backup_id, len(targets), device_id)
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for target in targets:
-                if target.is_file():
-                    zf.write(target, arcname=target.name)
-                    file_count += 1
-                elif target.is_dir():
-                    for item in target.rglob("*"):
-                        if item.is_file():
-                            arcname = str(item.relative_to(target.parent))
-                            zf.write(item, arcname=arcname)
+                try:
+                    if is_excluded_directory(target):
+                        logger.info("Skipping excluded target directory scope: %s", target)
+                        continue
+
+                    if target.is_file():
+                        if should_include_file(target):
+                            zf.write(target, arcname=target.name)
                             file_count += 1
+                    elif target.is_dir():
+                        for root, dirnames, filenames in os.walk(
+                            target, topdown=True, onerror=_on_walk_error, followlinks=False
+                        ):
+                            root_path = Path(root)
+
+                            # Prune excluded directories in-place to prevent os.walk from entering system/AppData folders
+                            kept_dirs = []
+                            for d in dirnames:
+                                child_dir = root_path / d
+                                if is_excluded_directory(child_dir):
+                                    logger.debug("Pruning excluded sub-directory from traversal: %s", child_dir)
+                                else:
+                                    kept_dirs.append(d)
+                            dirnames[:] = kept_dirs
+
+                            # Evaluate each file in current directory
+                            for filename in filenames:
+                                item = root_path / filename
+                                if should_include_file(item):
+                                    try:
+                                        if target.parent == target:
+                                            arcname = str(item.relative_to(target))
+                                        else:
+                                            arcname = str(item.relative_to(target.parent))
+                                        zf.write(item, arcname=arcname)
+                                        file_count += 1
+                                    except (PermissionError, OSError) as write_err:
+                                        logger.warning(
+                                            "Skipping file due to OS permission error while archiving %s: %s",
+                                            item,
+                                            write_err,
+                                        )
+                                    except Exception as write_err:
+                                        logger.warning("Failed to archive file %s: %s", item, write_err)
+
+                except (PermissionError, OSError) as target_err:
+                    logger.warning("Permission error while processing target path %s: %s", target, target_err)
+                except Exception as target_err:
+                    logger.warning("Unexpected error while processing target path %s: %s", target, target_err)
 
         size_bytes = zip_path.stat().st_size
         

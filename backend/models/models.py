@@ -93,6 +93,17 @@ class DeviceDoc:
     user_id: str | None = None
     user_email: str | None = None
     user_full_name: str | None = None
+    # Isolation fields
+    isolated_at: datetime | None = None
+    isolated_by_user_id: str | None = None
+    isolated_by_email: str | None = None
+    isolation_reason: str | None = None
+    isolation_type: str | None = None
+    isolation_grace_period: int | None = None
+    can_auto_recover: bool = False
+    recovered_at: datetime | None = None
+    recovered_by_user_id: str | None = None
+    recovered_by_email: str | None = None
 
     @staticmethod
     def from_firestore(doc_id: str, data: dict) -> "DeviceDoc":
@@ -113,13 +124,24 @@ class DeviceDoc:
             user_id=data.get("user_id"),
             user_email=data.get("user_email"),
             user_full_name=data.get("user_full_name"),
+            # Isolation fields
+            isolated_at=_to_datetime(data.get("isolated_at")),
+            isolated_by_user_id=data.get("isolated_by_user_id"),
+            isolated_by_email=data.get("isolated_by_email"),
+            isolation_reason=data.get("isolation_reason"),
+            isolation_type=data.get("isolation_type"),
+            isolation_grace_period=data.get("isolation_grace_period"),
+            can_auto_recover=bool(data.get("can_auto_recover", False)),
+            recovered_at=_to_datetime(data.get("recovered_at")),
+            recovered_by_user_id=data.get("recovered_by_user_id"),
+            recovered_by_email=data.get("recovered_by_email"),
         )
 
 
 @dataclass
 class LogDoc:
     id: str
-    device_id: str
+    device_id: str | None
     category: str
     severity: str
     source: str | None
@@ -131,7 +153,7 @@ class LogDoc:
     def from_firestore(doc_id: str, data: dict) -> "LogDoc":
         return LogDoc(
             id=doc_id,
-            device_id=data["device_id"],
+            device_id=data.get("device_id"),
             category=data["category"],
             severity=data.get("severity", LogSeverity.info.value),
             source=data.get("source"),
@@ -217,6 +239,78 @@ class AuditLogDoc:
             ip_address=data.get("ip_address"),
             user_agent=data.get("user_agent"),
             created_at=_to_datetime(data.get("created_at")),
+        )
+
+
+@dataclass
+class DeviceSwitchRequestDoc:
+    id: str
+    user_id: str
+    user_email: str
+    user_full_name: str
+    old_device_id: str
+    old_hostname: str
+    new_hostname: str
+    new_platform: str | None
+    new_ip_address: str | None
+    status: str  # pending, approved, rejected
+    requested_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: str | None = None
+    reviewed_by_email: str | None = None
+    rejection_reason: str | None = None
+
+    @staticmethod
+    def from_firestore(doc_id: str, data: dict) -> "DeviceSwitchRequestDoc":
+        return DeviceSwitchRequestDoc(
+            id=doc_id,
+            user_id=data["user_id"],
+            user_email=data["user_email"],
+            user_full_name=data["user_full_name"],
+            old_device_id=data["old_device_id"],
+            old_hostname=data["old_hostname"],
+            new_hostname=data["new_hostname"],
+            new_platform=data.get("new_platform"),
+            new_ip_address=data.get("new_ip_address"),
+            status=data.get("status", "pending"),
+            requested_at=_to_datetime(data.get("requested_at")),
+            reviewed_at=_to_datetime(data.get("reviewed_at")),
+            reviewed_by_user_id=data.get("reviewed_by_user_id"),
+            reviewed_by_email=data.get("reviewed_by_email"),
+            rejection_reason=data.get("rejection_reason"),
+        )
+
+
+@dataclass
+class IsolationAuditDoc:
+    id: str
+    event: str  # device.isolated or device.recovered
+    device_id: str
+    device_hostname: str
+    device_user_id: str
+    device_user_email: str
+    action_by_user_id: str
+    action_by_email: str
+    isolation_type: str | None = None  # network_only or full_shutdown
+    grace_period_seconds: int | None = None
+    reason: str | None = None
+    timestamp: datetime | None = None
+
+    @staticmethod
+    def from_firestore(doc_id: str, data: dict) -> "IsolationAuditDoc":
+        return IsolationAuditDoc(
+            id=doc_id,
+            event=data["event"],
+            device_id=data["device_id"],
+            device_hostname=data["device_hostname"],
+            device_user_id=data["device_user_id"],
+            device_user_email=data["device_user_email"],
+            action_by_user_id=data["action_by_user_id"],
+            action_by_email=data["action_by_email"],
+            isolation_type=data.get("isolation_type"),
+            grace_period_seconds=data.get("grace_period_seconds"),
+            reason=data.get("reason"),
+            timestamp=_to_datetime(data.get("timestamp")),
         )
 
 

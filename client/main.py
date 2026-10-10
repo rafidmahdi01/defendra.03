@@ -27,6 +27,7 @@ from modules.behavior_monitor import BehaviorMonitor
 from modules.command_handler import CommandHandler
 from modules.device_monitor import DeviceMonitor
 from modules.email_scanner import EmailScanner
+from modules.isolation_handler import IsolationHandler
 from modules.usb_scanner import USBScanner
 
 
@@ -59,6 +60,10 @@ def main() -> None:
     logger = logging.getLogger("client.main")
     settings = get_settings()
 
+    # Check for admin privileges before proceeding
+    from core.bootstrap import check_admin_privileges
+    check_admin_privileges()
+
     logger.info("=" * 60)
     logger.info("Defendra Client Server v%s", settings.agent_version)
     logger.info("Server: %s", settings.server_url)
@@ -81,7 +86,8 @@ def main() -> None:
     alerts.start()
 
     backup = BackupManager(client)
-    command_handler = CommandHandler(client, alerts, backup)
+    isolation = IsolationHandler(client, alerts)
+    command_handler = CommandHandler(client, alerts, backup, isolation)
 
     modules: list[tuple[str, threading.Thread]] = [
         ("device-monitor", threading.Thread(target=_run_module, args=("device-monitor", DeviceMonitor(client).run), daemon=True)),

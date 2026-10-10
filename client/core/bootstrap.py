@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import os
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -14,6 +17,32 @@ if TYPE_CHECKING:
     from core.api_client import DefendraClient
 
 logger = logging.getLogger("client.bootstrap")
+
+
+def is_running_as_admin() -> bool:
+    """Check if the process has administrator/root privileges."""
+    try:
+        if os.name == 'nt':  # Windows
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:  # Linux/Unix
+            return os.geteuid() == 0
+    except Exception:
+        return False
+
+
+def check_admin_privileges() -> None:
+    """Verify admin privileges and exit if not running with elevated permissions."""
+    if not is_running_as_admin():
+        logger.error("Client agent must run with administrator/root privileges for isolation features")
+        print("\n" + "="*70)
+        print("ERROR: This agent requires elevated privileges")
+        print("="*70)
+        if os.name == 'nt':
+            print("Windows: Right-click and select 'Run as Administrator'")
+        else:
+            print("Linux/macOS: Run with sudo (e.g., sudo python main.py)")
+        print("="*70 + "\n")
+        sys.exit(1)
 
 
 def wait_for_backend(server_url: str | None = None, timeout: int = 90) -> bool:

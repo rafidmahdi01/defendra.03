@@ -3,37 +3,46 @@ import imaplib
 import os
 import re
 import time
-from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 
 from scan_config import SCAN_INTERVAL_SECONDS
+from utils.config import load_all_configs
 from utils.ai_analyzer import analyze_email_with_ai, analyze_threat, huggingface_configured
 from utils.alert_sender import log_threat, send_alert
 from utils.device_manager import sync_email_scanner_settings
 
-_BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(dotenv_path=_BASE_DIR / ".env")
+load_all_configs()
+
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 
-_last_auth_error_at = 0.0
 
-# Global variable to hold OAuth 2.0 access token (passed in-memory from backend)
+def fetch_agent_keys():
+    global VT_API_KEY
+    backend_url = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    token = os.getenv("MARIA_API_TOKEN", os.getenv("ENROLLMENT_TOKEN", "agent_token"))
+    try:
+        res = requests.get(
+            f"{backend_url}/api/settings/agent-keys",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5
+        )
+        if res.status_code == 200:
+            data = res.json()
+            VT_API_KEY = data.get("VIRUSTOTAL_API_KEY") or os.getenv("VIRUSTOTAL_API_KEY")
+            hf_key = data.get("HUGGINGFACE_API_KEY")
+            if hf_key:
+                os.environ["HUGGINGFACE_API_KEY"] = hf_key
+    except Exception as e:
+        print(f"[email_scanner] Could not fetch dynamic agent keys: {e}")
+
+
+_last_auth_error_at = 0.0
 _oauth_access_token: str | None = None
 _monitored_email_address: str | None = None
 
 
-# Removed legacy functions:
-# - _read_email_credentials: no longer reading plaintext passwords from .env
-# - email_scanner_configured: replaced by token-based authentication check
-
-
 def set_oauth_token(email_address: str, access_token: str) -> None:
-    """
-    Set OAuth 2.0 credentials for IMAP authentication.
-    Called by the backend after completing OAuth flow.
-    """
     global _oauth_access_token, _monitored_email_address
     _oauth_access_token = access_token
     _monitored_email_address = email_address
@@ -41,7 +50,6 @@ def set_oauth_token(email_address: str, access_token: str) -> None:
 
 
 def oauth_configured() -> bool:
-    """Returns True if OAuth 2.0 credentials are available in memory."""
     return bool(_oauth_access_token and _monitored_email_address)
 
 
@@ -72,20 +80,19 @@ def scan_emails():
 
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        
-        # Use XOAUTH2 SASL mechanism instead of password authentication
         auth_string = f"user={_monitored_email_address}\1auth=Bearer {_oauth_access_token}\1\1"
-        mail.authenticate("XOAUTH2", lambda x: auth_string.encode())
-        
-        mail.select("inbox")
+        mail.authenticate("XOAUTH2", lambda x: auth_string)
+        mail.select("INBOX")
 
-        _, messages = mail.search(None, "UNSEEN")
-        for num in messages[0].split():
+        _, search_data = mail.search(None, "UNSEEN")
+        messages = search_data[0].split()
+
+        for num in messages:
             _, msg_data = mail.fetch(num, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-
-            subject = str(msg.get("Subject"))
-            sender = str(msg.get("From"))
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+            subject = str(msg.get("Subject", "No Subject"))
+            sender = str(msg.get("From", "Unknown Sender"))
 
             body = ""
             if msg.is_multipart():
@@ -106,10 +113,7 @@ def scan_emails():
                 if malicious_link_found:
                     details = "Malicious link detected by VirusTotal."
                 else:
-                    details = (
-                        f"AI detected phishing ({ai_result.get('confidence')}% confidence): "
-                        f"{ai_reason}"
-                    )
+                    details = f"AI detected phishing ({ai_result.get('confidence')}% confidence): {ai_reason}"
 
                 analysis = analyze_threat("phishing_email", details)
                 full_details = (
@@ -133,39 +137,25 @@ def scan_emails():
 
         mail.close()
         mail.logout()
-    except imaplib.IMAP4.error as e:
-        err = str(e).upper()
-        if "AUTHENTICATIONFAILED" in err or "INVALID CREDENTIALS" in err:
-            now = time.time()
-            if now - _last_auth_error_at > 300:
-                print(
-                    "[email_scanner] Gmail OAuth authentication failed. "
-                    "The OAuth 2.0 access token may have expired. "
-                    "Please re-authenticate through the Defendra dashboard."
-                )
-                _last_auth_error_at = now
-        else:
-            print(f"[email_scanner] IMAP error: {e}")
     except Exception as e:
-        print(f"[email_scanner] Error: {e}")
+        print(f"[email_scanner] Scan error: {e}")
 
 
 def run_email_scanner():
     print("Starting AI-Powered Email Scanner...")
+    fetch_agent_keys()
     if huggingface_configured():
-        print("[email_scanner] Hugging Face LLM enabled (HuggingFaceH4/zephyr-7b-beta) for phishing analysis.")
+        print("[email_scanner] Hugging Face LLM enabled for phishing analysis.")
     else:
-        print(
-            "[email_scanner] Hugging Face LLM disabled — set HUGGINGFACE_API_KEY in client_agent/.env "
-            "to enable AI phishing analysis after rule signals fire."
-        )
-    print("[email_scanner] Waiting for OAuth 2.0 token from dashboard...")
+        print("[email_scanner] Hugging Face LLM disabled (no API key configured).")
+    
     while True:
-        sync_email_scanner_settings()
-        if not oauth_configured():
-            time.sleep(SCAN_INTERVAL_SECONDS)
-            continue
-        scan_emails()
+        try:
+            sync_email_scanner_settings()
+            if oauth_configured():
+                scan_emails()
+        except Exception as e:
+            print(f"[email_scanner] Loop error: {e}")
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 

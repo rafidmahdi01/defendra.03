@@ -129,12 +129,23 @@ class DeviceRead(DeviceCreate):
     user_email: str | None = None
     user_full_name: str | None = None
     user_name: str | None = None
+    # Isolation fields
+    isolated_at: datetime | None = None
+    isolated_by_user_id: str | None = None
+    isolated_by_email: str | None = None
+    isolation_reason: str | None = None
+    isolation_type: str | None = None
+    isolation_grace_period: int | None = None
+    can_auto_recover: bool = False
+    recovered_at: datetime | None = None
+    recovered_by_user_id: str | None = None
+    recovered_by_email: str | None = None
 
     model_config = {"from_attributes": True}
 
 
 class LogCreate(BaseModel):
-    device_id: str
+    device_id: str | None = None
     category: str
     severity: str = "info"
     source: str | None = None
@@ -142,8 +153,14 @@ class LogCreate(BaseModel):
     raw_payload: dict[str, Any] | None = None
 
 
-class LogRead(LogCreate):
+class LogRead(BaseModel):
     id: str
+    device_id: str | None = None
+    category: str
+    severity: str = "info"
+    source: str | None = None
+    message: str
+    raw_payload: dict[str, Any] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -205,3 +222,43 @@ class MessageResponse(BaseModel):
 
 class SentinelChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
+
+
+# Device Isolation Schemas
+class IsolationRequest(BaseModel):
+    isolation_type: str = Field(pattern="^(network_only|full_shutdown)$")
+    grace_period_seconds: int = Field(default=30, ge=0, le=300)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class IsolationResponse(BaseModel):
+    message: str
+    device_id: str
+    device_hostname: str
+    isolation_type: str
+    grace_period_seconds: int
+
+
+# Device Switch Request Schemas
+class DeviceSwitchRequestRead(BaseModel):
+    id: str
+    user_id: str
+    user_email: str
+    user_full_name: str
+    old_device_id: str
+    old_hostname: str
+    new_hostname: str
+    new_platform: str | None = None
+    new_ip_address: str | None = None
+    status: str  # pending, approved, rejected
+    requested_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: str | None = None
+    reviewed_by_email: str | None = None
+    rejection_reason: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class DeviceSwitchRejectRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)

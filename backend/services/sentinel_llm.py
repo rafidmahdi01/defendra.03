@@ -17,8 +17,19 @@ def stream_sentinel_reply(context_data: dict, user_message: str):
     Yields text chunks as they are generated.
     """
     settings = get_settings()
-    if not settings.huggingface_llm_enabled or not settings.huggingface_api_key.strip():
-        raise RuntimeError("Hugging Face is not configured. Set HUGGINGFACE_API_KEY in backend/.env.")
+    hf_token = settings.huggingface_api_key.strip()
+    if not hf_token:
+        try:
+            from database.firebase import get_firestore
+            db = get_firestore()
+            doc = db.collection("system_settings").document("integrations").get()
+            if doc.exists:
+                hf_token = ((doc.to_dict() or {}).get("HUGGINGFACE_API_KEY") or "").strip()
+        except Exception:
+            pass
+
+    if not settings.huggingface_llm_enabled or not hf_token:
+        raise RuntimeError("Hugging Face is not configured. Set HUGGINGFACE_API_KEY in backend/.env or Settings.")
 
     system_prompt = """You are Sentinel AI, the cybersecurity assistant for Defendra.
 Use the following live system context to answer the user's query.
@@ -40,7 +51,7 @@ If you don't have enough information in the context, say so clearly."""
     
     # Create the client lazily so environment changes take effect after a restart.
     client = InferenceClient(
-        token=settings.huggingface_api_key.strip(),
+        token=hf_token,
         provider=settings.huggingface_provider,
     )
     stream = client.chat.completions.create(
