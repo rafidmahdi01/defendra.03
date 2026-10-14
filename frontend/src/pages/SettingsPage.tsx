@@ -201,13 +201,35 @@ export default function SettingsPage() {
   }, [connected, isAdmin, selectedUserId]);
 
   const loadManagedUsers = useCallback(async () => {
-    if (!isAdmin || !connected) return;
+    if (!isAdmin || !connected) {
+      console.log('[SettingsPage] Skipping loadManagedUsers - isAdmin:', isAdmin, 'connected:', connected);
+      return;
+    }
     try {
-      const { data } = await api.get<ManagedUser[]>('/auth/users');
+      console.log('[SettingsPage] Loading managed users...');
+      const response = await api.get<ManagedUser[]>('/auth/users');
+      console.log('[SettingsPage] Raw response:', response);
+      console.log('[SettingsPage] Response data:', response.data);
+      console.log('[SettingsPage] Response data type:', typeof response.data);
+      console.log('[SettingsPage] Is array?', Array.isArray(response.data));
+      
+      const { data } = response;
       const users = Array.isArray(data) ? data : [];
+      console.log('[SettingsPage] Processed users array:', users);
+      console.log('[SettingsPage] Users count:', users.length);
+      if (users.length > 0) {
+        console.log('[SettingsPage] First user:', users[0]);
+      }
+      
       setManagedUsers(users);
       setSelectedUserId((current) => current || users[0]?.id || "");
-    } catch {
+    } catch (error: unknown) {
+      console.error('[SettingsPage] Error loading managed users:', error);
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as { response?: { data?: unknown } };
+        console.error('[SettingsPage] Error response:', axiosError.response);
+        console.error('[SettingsPage] Error response data:', axiosError.response?.data);
+      }
       setManagedUsers([]);
       setSelectedUserId("");
     }
@@ -270,7 +292,17 @@ export default function SettingsPage() {
   }, [isAdmin, refreshAdminActivity]);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    console.log('[SettingsPage] useEffect for loadManagedUsers - isAdmin:', isAdmin, 'connected:', connected);
+    console.log('[SettingsPage] Current user from localStorage:', localStorage.getItem('crps_user'));
+    console.log('[SettingsPage] Current token from localStorage:', localStorage.getItem('crps_token') ? 'Token exists' : 'No token');
+    if (!isAdmin) {
+      console.warn('[SettingsPage] User is not admin, cannot load users');
+      return;
+    }
+    if (!connected) {
+      console.warn('[SettingsPage] Backend not connected, cannot load users');
+      return;
+    }
     loadManagedUsers();
   }, [isAdmin, loadManagedUsers]);
 
@@ -553,6 +585,23 @@ export default function SettingsPage() {
           </form>
         </GlassCard>
 
+        {/* DEBUG INFO - REMOVE AFTER FIXING */}
+        <GlassCard
+          title="🔍 DEBUG INFO"
+          subtitle="Temporary debugging information"
+          icon={<Users className="h-4 w-4" />}
+          className="overflow-visible bg-red-500/10"
+        >
+          <div className="space-y-2 font-mono text-xs">
+            <div>isAdmin: <strong>{String(isAdmin)}</strong></div>
+            <div>connected: <strong>{String(connected)}</strong></div>
+            <div>managedUsers.length: <strong>{managedUsers.length}</strong></div>
+            <div>API_URL: <strong>{API_URL}</strong></div>
+            <div>Token exists: <strong>{String(!!localStorage.getItem('crps_token'))}</strong></div>
+            <div>User role: <strong>{JSON.stringify(localStorage.getItem('crps_user'))}</strong></div>
+          </div>
+        </GlassCard>
+
         {/* User Management & Approval */}
         <GlassCard
           title="User Management"
@@ -560,7 +609,15 @@ export default function SettingsPage() {
           icon={<Users className="h-4 w-4" />}
           className="overflow-visible"
         >
-          {managedUsers.length === 0 ? (
+          {!connected ? (
+            <p className="text-center text-sm text-muted-foreground py-4">
+              ⚠️ Backend service not connected. Unable to load users.
+            </p>
+          ) : !isAdmin ? (
+            <p className="text-center text-sm text-muted-foreground py-4">
+              ⚠️ Admin access required to view users.
+            </p>
+          ) : managedUsers.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground py-4">
               No users found. Create a user account above.
             </p>

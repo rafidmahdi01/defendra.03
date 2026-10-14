@@ -60,15 +60,17 @@ class UserDoc:
 
     @staticmethod
     def from_firestore(doc_id: str, data: dict) -> "UserDoc":
+        # Defensive parsing - provide defaults for missing required fields to prevent crashes
+        now = datetime.now()
         return UserDoc(
             id=doc_id,
-            email=data["email"],
-            full_name=data["full_name"],
-            hashed_password=data["hashed_password"],
+            email=data.get("email", f"unknown_{doc_id}@placeholder.local"),
+            full_name=data.get("full_name", "Unknown User"),
+            hashed_password=data.get("hashed_password", ""),
             role=data.get("role", UserRole.user.value),
             is_active=data.get("is_active", True),
-            created_at=_to_datetime(data.get("created_at")),
-            updated_at=_to_datetime(data.get("updated_at")),
+            created_at=_to_datetime(data.get("created_at")) or now,
+            updated_at=_to_datetime(data.get("updated_at")) or now,
             last_login_at=_to_datetime(data.get("last_login_at")),
             last_login_ip=data.get("last_login_ip"),
             is_online=bool(data.get("is_online", False)),
