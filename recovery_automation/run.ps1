@@ -11,7 +11,7 @@ if (-not (Test-Path $python)) {
 
 if (-not (Test-Path ".env")) {
     Copy-Item .env.example .env
-    Write-Host "Created .env from .env.example — set DEFENDRA_API_EMAIL / PASSWORD"
+    Write-Host "Created .env from .env.example — set DEVICE_ENROLLMENT_KEY"
 }
 
 Write-Host "Starting Recovery & Automation on http://127.0.0.1:8001"

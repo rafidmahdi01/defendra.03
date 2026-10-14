@@ -17,8 +17,8 @@ RUN npm ci --only=production=false
 COPY . .
 
 # Build arguments for environment variables (embedded at build time)
-ARG VITE_API_URL=http://127.0.0.1:8000
-ARG VITE_WS_URL=ws://127.0.0.1:8000/ws/dashboard
+ARG VITE_API_URL=https://api.technohavenmalaysia.com
+ARG VITE_WS_URL=wss://api.technohavenmalaysia.com/ws/dashboard
 
 # Set environment variables for Vite build
 ENV VITE_API_URL=$VITE_API_URL

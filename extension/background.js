@@ -16,7 +16,7 @@ async function saveEvent(evt) {
     });
 
     // optionally forward to local backend if configured
-    const cfg = (await chrome.storage.local.get('defendra_backend_url'))['defendra_backend_url'] || 'http://127.0.0.1:8000/api/logs';
+    const cfg = (await chrome.storage.local.get('defendra_backend_url'))['defendra_backend_url'] || 'https://api.technohavenmalaysia.com/api/logs';
     try {
       await fetch(cfg, {
         method: 'POST',

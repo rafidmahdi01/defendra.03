@@ -24,6 +24,10 @@ class BackupRestoreRequest(BaseModel):
         default=None,
         description="Restore destination directory",
     )
+    restore_to_original: bool = Field(
+        default=True,
+        description="If true, restore files directly back into original backup paths/sources",
+    )
 
 
 class ThreatDetectedRequest(BaseModel):

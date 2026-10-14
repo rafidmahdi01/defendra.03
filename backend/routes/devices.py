@@ -120,14 +120,14 @@ def _load_device(db: Client, device_id: str) -> DeviceDoc:
 
 
 def _require_device_access(device: DeviceDoc, user: UserDoc) -> None:
-    if _is_admin(user):
+    if _is_admin(user) or (user.role or "").lower() == "agent":
         return
     if device.user_id and device.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to access this device")
 
 
 def _list_devices_for_user(db: Client, user: UserDoc) -> list[DeviceDoc]:
-    if _is_admin(user):
+    if _is_admin(user) or (user.role or "").lower() == "agent":
         docs = db.collection("devices").stream()
     else:
         docs = db.collection("devices").where("user_id", "==", user.id).stream()

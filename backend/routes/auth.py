@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 import base64
 import hashlib
+import hmac
 import logging
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from google.cloud.firestore import Client
@@ -12,6 +14,7 @@ from auth.security import create_access_token, generate_otp, hash_password, veri
 from database.firebase import get_firestore
 from models.models import UserDoc
 from models.schemas import (
+    DeviceTokenRequest,
     EmailScannerSettingsRead,
     EmailScannerSettingsSecretRead,
     EmailScannerSettingsWrite,
@@ -459,6 +462,58 @@ async def request_otp(
     record_audit(db, "auth.request_otp", user=user, request=request)
     
     return MessageResponse(message="OTP code sent to your email")
+
+
+_AGENT_PRINCIPAL_ID = "svc-endpoint-agent"
+_AGENT_TOKEN_MINUTES = 60
+
+
+@router.post("/device-token")
+async def device_token(
+    payload: DeviceTokenRequest,
+    request: Request,
+    db: Client = Depends(get_firestore),
+):
+    """
+    Machine-to-machine auth for the endpoint agent.
+
+    The agent authenticates with a deployment-scoped enrollment key (not a human
+    account, so no password/OTP). It receives a short-lived token for a dedicated,
+    non-admin service principal. Fails closed when no key is configured.
+    """
+    expected = settings.device_enrollment_key
+    if not expected:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Device enrollment not configured")
+    if not hmac.compare_digest(payload.enrollment_key.encode(), expected.encode()):
+        logger.warning("Rejected device enrollment key from %s", request.client.host if request.client else "?")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid enrollment key")
+
+    now = datetime.now(timezone.utc)
+    ref = db.collection("users").document(_AGENT_PRINCIPAL_ID)
+    snap = ref.get()
+    if not snap.exists:
+        ref.set(
+            {
+                "email": "endpoint-agent@service.local",
+                "full_name": "Endpoint Agent (service)",
+                # Unusable hash: this principal can never log in with a password.
+                "hashed_password": "!" + secrets.token_urlsafe(32),
+                "role": "agent",
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    elif not snap.to_dict().get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent principal disabled")
+
+    token = create_access_token(
+        _AGENT_PRINCIPAL_ID,
+        {"role": "agent", "host": payload.hostname[:128]},
+        expires_minutes=_AGENT_TOKEN_MINUTES,
+    )
+    logger.info("Issued agent token for host=%s", payload.hostname[:128])
+    return {"access_token": token, "token_type": "bearer", "expires_in": _AGENT_TOKEN_MINUTES * 60}
 
 
 @router.post("/login", response_model=Token)

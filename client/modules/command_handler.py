@@ -129,10 +129,22 @@ class CommandHandler:
 
         elif cmd_type == "backup":
             self._handled.add(key)
-            count = self.backup.run_backup(trigger="admin_command")
+            result = self.backup.run_backup(trigger="admin_command")
+            count = result.get("local_files", 0) if isinstance(result, dict) else result
             self.alerts.notify(
                 "Backup Complete",
                 f"Admin-triggered backup finished ({count} files).",
+                severity="info",
+                rule_name="command_handler",
+            )
+
+        elif cmd_type in ("restore", "restore_backup", "recover_files"):
+            self._handled.add(key)
+            result = self.backup.restore_backup()
+            count = result.get("files_recovered", 0)
+            self.alerts.notify(
+                "Files Recovered",
+                f"File recovery completed: {count} file(s) restored into active backup folder.",
                 severity="info",
                 rule_name="command_handler",
             )

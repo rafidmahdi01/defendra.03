@@ -26,3 +26,10 @@ backend/firebase-credentials.json
 *adminsdk*.json
 *serviceAccount*.json
 *service-account*.json
+
+# Agent & Tool artifacts
+.agents/
+.aider-desk/
+.claude/
+graphify-out/
+skills-lock.json

@@ -386,9 +386,14 @@ export default function DevicesPage() {
                 filtered.map((d) => (
                   <tr key={d.id} className="border-t border-white/5 transition hover:bg-white/[0.03]">
                     <Td>
-                      <div className="flex items-center gap-2 font-medium">
-                        <Server className="h-3.5 w-3.5 shrink-0 text-[var(--cyan)]" />
-                        {d.hostname}
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2 font-medium">
+                          <Server className="h-3.5 w-3.5 shrink-0 text-[var(--cyan)]" />
+                          <span>{d.hostname}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-muted-foreground pl-5.5">
+                          ID: {d.id}
+                        </span>
                       </div>
                     </Td>
                     <Td className="text-muted-foreground">

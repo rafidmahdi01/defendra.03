@@ -33,8 +33,11 @@ def generate_otp() -> str:
     return f"{secrets.randbelow(1000000):06d}"
 
 
-def create_access_token(subject: str, claims: dict[str, Any] | None = None) -> str:
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
+def create_access_token(
+    subject: str, claims: dict[str, Any] | None = None, expires_minutes: int | None = None
+) -> str:
+    minutes = expires_minutes or settings.access_token_expire_minutes
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     payload: dict[str, Any] = {"sub": subject, "exp": expires_at}
     if claims:
         payload.update(claims)

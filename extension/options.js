@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load backend URL
   const cfg = await chrome.storage.local.get('defendra_backend_url');
-  backendUrlInput.value = cfg.defendra_backend_url || 'http://127.0.0.1:8000/api/logs';
+  backendUrlInput.value = cfg.defendra_backend_url || 'https://api.technohavenmalaysia.com/api/logs';
 
   // Load permissions
   const perms = await chrome.storage.local.get('defendra_permissions');

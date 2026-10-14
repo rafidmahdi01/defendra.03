@@ -33,7 +33,31 @@ class BackupManager:
         self.source = self.settings.data_dir / "important"
         self.backup_dir = self.settings.backup_dir
         self.cloud_marker = self.backup_dir / "cloud_sync.json"
-        self.recovery_automation_url = "http://127.0.0.1:8001"  # Recovery automation service
+        self.recovery_automation_url = self._get_recovery_url()
+
+    def _get_recovery_url(self) -> str:
+        """Resolve recovery automation URL with fallback to local or server URL."""
+        if self.settings.recovery_automation_url:
+            return self.settings.recovery_automation_url.rstrip("/")
+        # Default local service port 8001
+        return "http://127.0.0.1:8001"
+
+    def _get_target_urls(self) -> list[str]:
+        """Candidate URLs to contact for backup/recovery operations."""
+        urls = []
+        if self.settings.recovery_automation_url:
+            urls.append(self.settings.recovery_automation_url.rstrip("/"))
+        urls.append("http://127.0.0.1:8001")
+        if self.settings.server_url:
+            urls.append(self.settings.server_url.rstrip("/"))
+        # Deduplicate preserving order
+        seen = set()
+        deduped = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                deduped.append(u)
+        return deduped
 
     def run(self) -> None:
         logger.info("Backup manager started (Local + Cloud)")
@@ -105,7 +129,7 @@ class BackupManager:
     def _cloud_backup(self, local_path: Path, file_count: int, trigger: str) -> dict:
         """
         Send backup to recovery_automation service for cloud storage.
-        This service will upload to S3/cloud and manage centralized backups.
+        This service will upload to Firebase/cloud and manage centralized backups.
         """
         try:
             import requests
@@ -117,32 +141,123 @@ class BackupManager:
                 "device_id": device_id,
             }
 
-            # POST to recovery_automation backup endpoint
-            response = requests.post(
-                f"{self.recovery_automation_url}/backup/create",
-                json=payload,
-                timeout=30,
-            )
+            last_error = ""
+            for base_url in self._get_target_urls():
+                try:
+                    response = requests.post(
+                        f"{base_url}/backup/create",
+                        json=payload,
+                        timeout=30,
+                    )
+                    if response.status_code == 201:
+                        data = response.json()
+                        logger.info("Cloud backup created via %s: %s", base_url, data.get("backup_id"))
+                        return {
+                            "status": "success",
+                            "backup_id": data.get("backup_id"),
+                            "s3_uri": data.get("s3_uri") or data.get("firebase_uri"),
+                            "endpoint": base_url,
+                        }
+                    else:
+                        last_error = f"{base_url} returned {response.status_code}: {response.text[:100]}"
+                except Exception as exc:
+                    last_error = str(exc)
 
-            if response.status_code == 201:
-                data = response.json()
-                logger.info("Cloud backup created: %s", data.get("backup_id"))
-                return {
-                    "status": "success",
-                    "backup_id": data.get("backup_id"),
-                    "s3_uri": data.get("s3_uri"),
-                }
-            else:
-                logger.warning(
-                    "Cloud backup failed (status=%d): %s",
-                    response.status_code,
-                    response.text,
-                )
-                return {"status": "failed", "error": response.text}
+            logger.warning("Cloud backup could not reach endpoints: %s", last_error)
+            return {"status": "pending_local", "error": last_error}
 
         except Exception as e:
             logger.error("Cloud backup error: %s", e)
             return {"status": "error", "error": str(e)}
+
+    def restore_backup(
+        self,
+        backup_id: str | None = None,
+        target_dir: Path | str | None = None,
+    ) -> dict:
+        """
+        Restore files from a backup.
+        By default, restores directly into self.source (data/important) so that
+        the recovered files immediately become part of the active backing-up files!
+        """
+        dest = Path(target_dir) if target_dir else self.source
+        dest.mkdir(parents=True, exist_ok=True)
+        recovered_count = 0
+        method_used = "none"
+
+        # 1. Try recovery automation service (cloud or local)
+        try:
+            import requests
+
+            for base_url in self._get_target_urls():
+                try:
+                    resp = requests.post(
+                        f"{base_url}/backup/restore",
+                        json={
+                            "backup_id": backup_id,
+                            "target_dir": str(dest),
+                            "restore_to_original": True,
+                        },
+                        timeout=20,
+                    )
+                    if resp.status_code in (200, 201):
+                        data = resp.json()
+                        recovered_count = data.get("files_extracted", 0)
+                        method_used = f"recovery_service ({base_url})"
+                        logger.info("Restored via %s: %d files to %s", base_url, recovered_count, dest)
+                        break
+                except Exception as exc:
+                    logger.debug("Restore attempt failed on %s: %s", base_url, exc)
+        except ImportError:
+            pass
+
+        # 2. Local fallback if recovery service did not extract files or was unreachable
+        if recovered_count == 0 and self.backup_dir.exists():
+            candidates = sorted(
+                [d for d in self.backup_dir.iterdir() if d.is_dir() and d.name != "important"],
+                reverse=True,
+            )
+            if backup_id:
+                matched = [d for d in candidates if backup_id in d.name]
+                source_backup = matched[0] if matched else (candidates[0] if candidates else None)
+            else:
+                source_backup = candidates[0] if candidates else None
+
+            if source_backup and source_backup.exists():
+                for item in source_backup.rglob("*"):
+                    if item.is_file():
+                        try:
+                            rel = item.relative_to(source_backup)
+                            target_file = dest / rel
+                            target_file.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(item, target_file)
+                            recovered_count += 1
+                        except Exception as e:
+                            logger.error("Failed to restore file %s: %s", item, e)
+                method_used = f"local_archive ({source_backup.name})"
+                logger.info("Restored locally from %s: %d files to %s", source_backup, recovered_count, dest)
+
+        result = {
+            "backup_id": backup_id or "latest",
+            "destination": str(dest),
+            "files_recovered": recovered_count,
+            "method": method_used,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Log event to Defendra server
+        try:
+            self.client.send_log(
+                f"File recovery completed: {recovered_count} files restored to {dest} via {method_used}",
+                category="backup",
+                severity="info",
+                source="backup_manager",
+                raw_payload=result,
+            )
+        except Exception as e:
+            logger.error("Failed to log recovery event: %s", e)
+
+        return result
 
     def _get_device_id(self) -> str:
         """Retrieve device ID from device_id.txt."""

@@ -9,6 +9,7 @@ Maps spec endpoints to actual Defendra routes:
   POST /api/dashboard/update -> fallback to POST /api/logs (audit trail)
 """
 
+import socket
 import time
 from typing import Any
 
@@ -46,24 +47,32 @@ class DefendraAPIClient:
         if self._token and (now - self._token_obtained_at) < 3000:
             return self._token
 
-        email = self.settings.defendra_api_email
-        password = self.settings.defendra_api_password
-        if email and password:
-            try:
-                resp = requests.post(
-                    f"{self.base_url}/api/auth/login",
-                    json={"email": email, "password": password},
-                    timeout=self.timeout,
-                )
-                if resp.status_code == 200:
-                    self._token = resp.json().get("access_token", "")
-                    self._token_obtained_at = now
-                    logger.info("Obtained JWT from Defendra auth API")
-                    return self._token or ""
-            except requests.RequestException as exc:
-                logger.warning("Defendra login failed: %s", exc)
+        # Static token override (e.g. for tests) never expires locally.
+        if self.settings.defendra_api_token:
+            self._token = self.settings.defendra_api_token
+            self._token_obtained_at = now
+            return self._token
 
-        return self._token or ""
+        key = self.settings.device_enrollment_key
+        if not key:
+            logger.error("DEVICE_ENROLLMENT_KEY is not set — recovery service cannot authenticate")
+            return ""
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/auth/device-token",
+                json={"enrollment_key": key, "hostname": f"recovery@{socket.gethostname()}"},
+                timeout=self.timeout,
+            )
+            if resp.status_code == 200:
+                self._token = resp.json().get("access_token", "")
+                self._token_obtained_at = now
+                logger.info("Obtained service token from Defendra device-token API")
+                return self._token or ""
+            logger.error("Defendra device auth failed HTTP %s: %s", resp.status_code, resp.text[:200])
+        except requests.RequestException as exc:
+            logger.warning("Defendra device auth failed: %s", exc)
+
+        return ""
 
     def _request(
         self,

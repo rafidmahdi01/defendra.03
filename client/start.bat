@@ -20,7 +20,7 @@ if not exist "%ROOT%\.env" (
     echo Creating .env from .env.example ...
     copy /Y "%ROOT%\.env.example" "%ROOT%\.env"
     echo.
-    echo NOTE: Uses admin@defendra.com / Admin@1234 when backend is bootstrapped.
+    echo NOTE: Uses rafidedward@gmail.com / Admin@1234 when backend is bootstrapped.
     echo.
 )
 
@@ -44,7 +44,7 @@ echo Backend is ready.
 echo Bootstrapping admin account if needed...
 curl -s -X POST http://127.0.0.1:8000/api/auth/bootstrap-admin ^
   -H "Content-Type: application/json" ^
-  -d "{\"email\":\"admin@defendra.com\",\"full_name\":\"Defendra Admin\",\"password\":\"Admin@1234\",\"role\":\"admin\"}" >nul 2>&1
+  -d "{\"email\":\"rafidedward@gmail.com\",\"full_name\":\"Rafid Edward\",\"password\":\"Admin@1234\",\"role\":\"admin\"}" >nul 2>&1
 
 echo.
 echo Starting client server (Ctrl+C to stop)...

@@ -28,6 +28,10 @@ def init_firebase() -> None:
     settings = get_settings()
     emulator = settings.firestore_emulator_host
     cred_path = os.getenv("FIREBASE_ADMIN_CREDENTIALS") or settings.firebase_credentials_path
+    if not cred_path:
+        default_sa = Path(__file__).resolve().parent.parent / "firebase-adminsdk.json"
+        if default_sa.is_file():
+            cred_path = str(default_sa)
     cred_json_b64 = settings.firebase_credentials_json
     project_id = settings.firebase_project_id or "defendraai"
     storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET")
@@ -48,7 +52,20 @@ def init_firebase() -> None:
     else:
         os.environ.pop("FIRESTORE_EMULATOR_HOST", None)
 
-    if cred_json_b64:
+    sa_env = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    if sa_env and sa_env.strip().startswith("{"):
+        try:
+            cred_dict = json.loads(sa_env)
+            cred = credentials.Certificate(cred_dict)
+            try:
+                firebase_admin.initialize_app(cred, options=options)
+                logger.info("Firebase Admin initialized with FIREBASE_SERVICE_ACCOUNT env var (project=%s)", project_id)
+            except ValueError:
+                logger.info("Firebase Admin already initialized")
+            return
+        except Exception as e:
+            logger.warning("Failed to initialize Firebase Admin from FIREBASE_SERVICE_ACCOUNT: %s", e)
+    elif cred_json_b64:
         # Decode base64 JSON credentials stored in env var (no file path needed)
         try:
             cred_dict = json.loads(base64.b64decode(cred_json_b64).decode("utf-8"))
@@ -78,9 +95,14 @@ def init_firebase() -> None:
             )
 
         path = Path(cred_path).expanduser()
-        # Resolve relative paths against the backend directory (where this file lives)
-        if not path.is_absolute():
-            path = Path(__file__).resolve().parent.parent / path
+        backend_dir = Path(__file__).resolve().parent.parent
+        if not path.is_file():
+            path = backend_dir / cred_path
+        if not path.is_file():
+            filename = Path(str(cred_path).replace("\\", "/")).name
+            path = backend_dir / filename
+        if not path.is_file():
+            path = backend_dir / "firebase-adminsdk.json"
         if not path.is_file():
             raise FileNotFoundError(
                 f"Firebase credentials file not found: {path}. "

@@ -4,6 +4,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Add recovery_automation app to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,7 +32,7 @@ def test_constants():
     required_blocked = {".mp4", ".iso", ".exe", ".ost", ".tmp"}
     for ext in required_blocked:
         assert ext in BLOCKED_EXTENSIONS, f"Extension {ext} missing from BLOCKED_EXTENSIONS"
-    print("  ✓ Constants defined correctly.")
+    print("  [PASS] Constants defined correctly.")
 
 
 def test_directory_exclusion():
@@ -60,7 +66,7 @@ def test_directory_exclusion():
     for p in allowed_paths:
         assert is_excluded_directory(p) is False, f"Path should be allowed: {p}"
 
-    print("  ✓ Directory exclusion tests passed.")
+    print("  [PASS] Directory exclusion tests passed.")
 
 
 def test_file_filtering():
@@ -102,7 +108,7 @@ def test_file_filtering():
         import shutil
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
-    print("  ✓ File filtering tests passed.")
+    print("  [PASS] File filtering tests passed.")
 
 
 def test_create_backup_integration():
@@ -141,7 +147,7 @@ def test_create_backup_integration():
         )
 
         assert meta["file_count"] == 1, f"Expected 1 file archived, got {meta['file_count']}"
-        print(f"  ✓ Backup created successfully. Archived files count: {meta['file_count']}")
+        print(f"  [PASS] Backup created successfully. Archived files count: {meta['file_count']}")
 
     finally:
         import shutil
@@ -153,4 +159,4 @@ if __name__ == "__main__":
     test_directory_exclusion()
     test_file_filtering()
     test_create_backup_integration()
-    print("\n🎉 ALL BACKUP FILTER TESTS PASSED!")
+    print("\n[SUCCESS] ALL BACKUP FILTER TESTS PASSED!")

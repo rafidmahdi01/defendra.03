@@ -11,7 +11,7 @@ from utils.config import get_data_dir, load_all_configs
 
 load_all_configs()
 
-MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "https://api.technohavenmalaysia.com"))
 MARIA_API_TOKEN = os.getenv("MARIA_API_TOKEN", os.getenv("ENROLLMENT_TOKEN", ""))
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Defendra-Endpoint")
 
@@ -198,3 +198,4 @@ def send_alert(
         _save_offline(alert_type, severity, details, device)
         _start_retry_thread()
         return False
+

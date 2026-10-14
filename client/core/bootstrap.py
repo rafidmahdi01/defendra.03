@@ -72,15 +72,18 @@ def bootstrap_admin(server_url: str | None = None) -> bool:
     """
     settings = get_settings()
     base = (server_url or settings.server_url).rstrip("/")
-    email = settings.api_email or "admin@defendra.com"
-    password = settings.api_password or "Admin@1234"
+    email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "").strip()
+    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not email or not password:
+        logger.debug("Admin bootstrap skipped (BOOTSTRAP_ADMIN_EMAIL/PASSWORD not set)")
+        return True
 
     try:
         resp = requests.post(
             f"{base}/api/auth/bootstrap-admin",
             json={
                 "email": email,
-                "full_name": "Defendra Admin",
+                "full_name": "Rafid Edward",
                 "password": password,
                 "role": "admin",
             },
@@ -123,8 +126,8 @@ def connect_to_backend(client: DefendraClient, *, wait_timeout: int = 90) -> boo
     device_id = client.ensure_device()
     if not device_id:
         logger.error(
-            "Could not register device — verify API_EMAIL/API_PASSWORD in client/.env "
-            "(default: admin@defendra.com / Admin@1234)"
+            "Could not register device — verify DEVICE_ENROLLMENT_KEY in client/.env "
+            "matches the backend, and that the backend exposes /api/auth/device-token"
         )
         return False
 

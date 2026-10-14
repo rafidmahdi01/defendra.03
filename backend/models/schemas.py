@@ -66,6 +66,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class DeviceTokenRequest(BaseModel):
+    enrollment_key: str
+    hostname: str = ""
+
+
 class EmailScannerSettingsRead(BaseModel):
     email_address: str | None = None
     is_configured: bool = False

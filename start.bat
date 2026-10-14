@@ -54,6 +54,8 @@ if not exist "%ROOT%\client\.venv\Scripts\python.exe" (
     echo Creating client virtual environment...
     python -m venv "%ROOT%\client\.venv"
     "%ROOT%\client\.venv\Scripts\python.exe" -m pip install -r "%ROOT%\client\requirements.txt"
+) else (
+    "%ROOT%\client\.venv\Scripts\python.exe" -m pip install -r "%ROOT%\client\requirements.txt" -q
 )
 
 :: Auto-setup: Python venv (recovery_automation)
@@ -94,10 +96,10 @@ curl -s --max-time 3 http://127.0.0.1:8000/health >nul 2>&1
 if errorlevel 1 goto wait_backend
 echo     Backend is ready.
 
-echo Bootstrapping admin user (admin@defendra.com) if needed...
+echo Bootstrapping admin user (rafidedward@gmail.com) if needed...
 curl -s -X POST http://127.0.0.1:8000/api/auth/bootstrap-admin ^
   -H "Content-Type: application/json" ^
-  -d "{\"email\":\"admin@defendra.com\",\"full_name\":\"Defendra Admin\",\"password\":\"Admin@1234\",\"role\":\"admin\"}" >nul 2>&1
+  -d "{\"email\":\"rafidedward@gmail.com\",\"full_name\":\"Rafid Edward\",\"password\":\"Admin@1234\",\"role\":\"admin\"}" >nul 2>&1
 
 echo [2/5] Starting Recovery ^& Automation on http://127.0.0.1:8001 ...
 start "Recovery" cmd /k "cd /d "%ROOT%\recovery_automation" && .venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001"
@@ -131,7 +133,7 @@ echo         start.bat. Only client\ (Client Server) runs now.
 echo         Do not run both at the same time.
 echo.
 echo   Login:
-echo     Email:    admin@defendra.com
+echo     Email:    rafidedward@gmail.com
 echo     Password: Admin@1234
 echo ============================================
 echo.

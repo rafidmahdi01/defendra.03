@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { DefendraLogo } from "./Logo";
-import { api, clearWorkstationLink, isElectronApp, isWorkstationLinked } from "@/services/api";
+import { api, API_URL, clearWorkstationLink, isElectronApp, isWorkstationLinked } from "@/services/api";
 import { notifyAuthChanged } from "@/hooks/useCurrentUser";
 import { formatRelative } from "@/hooks/useTelemetry";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
@@ -153,7 +153,8 @@ export function TopBar() {
   useEffect(() => {
     if (!connected || (electron && !wsLinked)) return;
 
-    const wsUrl = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000/ws/dashboard";
+    const defaultWsUrl = API_URL.startsWith("https") ? API_URL.replace(/^https/, "wss") + "/ws/dashboard" : API_URL.replace(/^http/, "ws") + "/ws/dashboard";
+    const wsUrl = import.meta.env.VITE_WS_URL || defaultWsUrl;
     const socket = new WebSocket(wsUrl);
 
     socket.onmessage = (message) => {
@@ -513,3 +514,4 @@ export function TopBar() {
     </header>
   );
 }
+

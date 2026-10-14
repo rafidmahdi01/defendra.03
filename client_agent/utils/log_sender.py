@@ -7,7 +7,7 @@ from utils.config import load_all_configs
 
 load_all_configs()
 
-MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "https://api.technohavenmalaysia.com"))
 
 
 def _build_headers() -> dict:
@@ -56,3 +56,4 @@ def send_log(
         return resp.status_code in (200, 201)
     except requests.RequestException:
         return False
+

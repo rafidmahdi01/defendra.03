@@ -19,7 +19,7 @@ VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
 
 def fetch_agent_keys():
     global VT_API_KEY
-    backend_url = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    backend_url = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "https://api.technohavenmalaysia.com"))
     token = os.getenv("MARIA_API_TOKEN", os.getenv("ENROLLMENT_TOKEN", "agent_token"))
     try:
         res = requests.get(
@@ -161,3 +161,4 @@ def run_email_scanner():
 
 if __name__ == "__main__":
     run_email_scanner()
+

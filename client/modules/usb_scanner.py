@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from core.api_client import DefendraClient
     from modules.alert_system import AlertSystem
 
+from modules.usb_hid_guard import HIDGuard
+
 logger = logging.getLogger("client.usb")
 
 # EICAR test string MD5 — safe test pattern, not real malware
@@ -29,6 +31,79 @@ KNOWN_BAD_HASHES = {
 }
 
 SUSPICIOUS_EXTENSIONS = {".exe", ".bat", ".cmd", ".vbs", ".js", ".scr", ".ps1", ".dll", ".inf"}
+
+_SCRIPT_EXTENSIONS = {".bat", ".cmd", ".vbs", ".vbe", ".js", ".jse", ".ps1", ".hta", ".wsf"}
+_EXEC_EXTENSIONS = {".exe", ".scr", ".com", ".pif", ".dll", ".msi"}
+_DECOY_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".jpg", ".jpeg", ".png", ".zip", ".rar", ".mp3", ".mp4"}
+_SCRIPT_BAD_TOKENS = (
+    b"-encodedcommand", b"-enc ", b"downloadstring", b"downloadfile", b"invoke-expression",
+    b"iex(", b"iex ", b"frombase64string", b"certutil -urlcache", b"bitsadmin /transfer",
+    b"mshta http", b"wscript.shell", b"-windowstyle hidden", b"-w hidden", b"reg add",
+    b"schtasks /create", b"net user ", b"vssadmin delete",
+)
+_LNK_BAD_TOKENS = (b"cmd.exe", b"powershell", b"wscript", b"cscript", b"mshta", b"rundll32", b"regsvr32")
+_MAX_FILES_PER_SCAN = 20000
+_FILE_ATTRIBUTE_HIDDEN = 0x2
+_FILE_ATTRIBUTE_SYSTEM = 0x4
+
+
+def _read_head(path: Path, n: int = 262144) -> bytes:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(n)
+    except OSError:
+        return b""
+
+
+def _utf16_variants(tokens: tuple[bytes, ...]) -> tuple[bytes, ...]:
+    return tokens + tuple(t.decode("latin-1").encode("utf-16le") for t in tokens)
+
+
+def classify_storage_file(path: Path, at_root: bool) -> tuple[str, str] | None:
+    """Return (reason, severity) if the file looks like USB-borne malware, else None."""
+    name = path.name.lower()
+    ext = path.suffix.lower()
+
+    try:
+        attrs = getattr(path.stat(), "st_file_attributes", 0)
+    except OSError:
+        return None
+    hidden = bool(attrs & (_FILE_ATTRIBUTE_HIDDEN | _FILE_ATTRIBUTE_SYSTEM))
+
+    if name == "autorun.inf":
+        head = _read_head(path, 8192).lower()
+        if any(k in head for k in (b"open=", b"shellexecute=", b"shell\\", b"action=")):
+            return "autorun_inf_launcher", "critical"
+        return None
+
+    # Decoy double extension: invoice.pdf.exe
+    if ext in _EXEC_EXTENSIONS | _SCRIPT_EXTENSIONS and Path(path.stem).suffix.lower() in _DECOY_EXTENSIONS:
+        return "double_extension_executable", "high"
+
+    # Classic USB shortcut worm: .lnk on the drive that spawns a shell
+    if ext == ".lnk":
+        head = _read_head(path, 4096).lower()
+        if any(t in head for t in _utf16_variants(_LNK_BAD_TOKENS)):
+            return "shortcut_spawns_shell", "high"
+        return None
+
+    if ext in _EXEC_EXTENSIONS:
+        if hidden:
+            return "hidden_executable", "high"
+        if at_root and ext != ".dll":
+            return "executable_in_drive_root", "medium"
+        return None
+
+    if ext in _SCRIPT_EXTENSIONS:
+        head = _read_head(path).lower()
+        if any(t in head for t in _utf16_variants(_SCRIPT_BAD_TOKENS)):
+            return "malicious_script_pattern", "high"
+        return None
+
+    # Executable disguised as a document/image
+    if ext in _DECOY_EXTENSIONS and _read_head(path, 2) == b"MZ":
+        return "executable_disguised_as_document", "high"
+    return None
 
 
 def _hash_file(path: Path, limit_bytes: int = 5_000_000) -> str | None:
@@ -182,8 +257,13 @@ class USBScanner:
         logger.info("USB scanner started")
         self._seen_usb_devices = {device["id"] for device in _get_connected_usb_devices()}
 
+        # Hardware-level BadUSB/HID watcher runs in its own daemon thread (WMI events).
+        self.hid_guard = HIDGuard(self.client, self.alerts)
+        hid_guard_active = self.hid_guard.start()
+
         while not self._stop.is_set():
-            self._scan_usb_peripherals()
+            if not hid_guard_active:  # legacy polling only when WMI watcher is unavailable
+                self._scan_usb_peripherals()
 
             drives = list_removable_drives(False)
             current = set(drives)
@@ -289,31 +369,47 @@ class USBScanner:
         if not root.exists():
             return threats
 
+        scanned = 0
         for dirpath, _, filenames in os.walk(root):
+            at_root = Path(dirpath) == root
             for name in filenames:
+                scanned += 1
+                if scanned > _MAX_FILES_PER_SCAN:
+                    logger.warning("Scan cap reached on %s", root)
+                    return threats
                 path = Path(dirpath) / name
                 ext = path.suffix.lower()
-                if ext not in SUSPICIOUS_EXTENSIONS and name.lower() != "autorun.inf":
-                    continue
 
-                file_hash = _hash_file(path)
-                if file_hash in KNOWN_BAD_HASHES:
-                    self._quarantine(path, "known_bad_hash")
-                    threats.append({"path": str(path), "reason": "known_bad_hash", "hash": file_hash})
-                    continue
+                if ext in SUSPICIOUS_EXTENSIONS or name.lower() == "autorun.inf":
+                    file_hash = _hash_file(path)
+                    if file_hash in KNOWN_BAD_HASHES:
+                        self._quarantine(path, "known_bad_hash")
+                        threats.append({"path": str(path), "reason": "known_bad_hash", "hash": file_hash})
+                        continue
+                    try:
+                        tiny = ext in SUSPICIOUS_EXTENSIONS and path.stat().st_size < 50
+                    except OSError:
+                        continue
+                    if tiny:
+                        self._quarantine(path, "suspicious_executable")
+                        threats.append({"path": str(path), "reason": "suspicious_executable", "hash": file_hash})
+                        continue
 
-                if ext in SUSPICIOUS_EXTENSIONS and path.stat().st_size < 50:
-                    self._quarantine(path, "suspicious_executable")
-                    threats.append(
-                        {"path": str(path), "reason": "suspicious_executable", "hash": file_hash}
-                    )
+                verdict = classify_storage_file(path, at_root)
+                if verdict:
+                    reason, sev = verdict
+                    # medium = informational (e.g. an exe in the root): report, don't move the user's file
+                    if sev != "medium":
+                        self._quarantine(path, reason)
+                    threats.append({"path": str(path), "reason": reason, "severity": sev,
+                                    "hash": _hash_file(path) if path.exists() else None})
 
         return threats
 
     def _quarantine(self, path: Path, reason: str) -> None:
         dest_dir = self.settings.quarantine_dir / reason
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / path.name
+        dest = dest_dir / f"{int(time.time() * 1000)}_{path.name}"
         try:
             shutil.move(str(path), str(dest))
             logger.warning("Quarantined %s -> %s", path, dest)

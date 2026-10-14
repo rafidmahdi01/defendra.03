@@ -206,8 +206,8 @@ class DefendraClient:
 
         if not self._get_token():
             logger.error(
-                "Cannot register device — check API_EMAIL/API_PASSWORD in client\\.env "
-                "(default: admin@defendra.com / Admin@1234 after running start.bat)"
+                "Cannot register device — check DEVICE_ENROLLMENT_KEY in client\\.env "
+                "(must match DEVICE_ENROLLMENT_KEY on the backend)"
             )
             return None
 
@@ -404,17 +404,13 @@ class DefendraClient:
             self._token_at = now
             return self._token
 
-        if self.settings.api_email and self.settings.api_password:
-            if self.settings.api_password in ("your_password_here", "change-me"):
-                logger.warning(
-                    "API_PASSWORD is still a placeholder — edit client\\.env with real credentials"
-                )
+        if self.settings.enrollment_key:
             try:
                 resp = self._session.post(
-                    f"{self.settings.api_base}/auth/login",
+                    f"{self.settings.api_base}/auth/device-token",
                     json={
-                        "email": self.settings.api_email,
-                        "password": self.settings.api_password,
+                        "enrollment_key": self.settings.enrollment_key,
+                        "hostname": socket.gethostname(),
                     },
                     timeout=10,
                 )
@@ -422,9 +418,11 @@ class DefendraClient:
                     self._token = resp.json().get("access_token", "")
                     self._token_at = now
                     return self._token or ""
-                logger.error("Login failed HTTP %s: %s", resp.status_code, resp.text[:200])
+                logger.error("Device auth failed HTTP %s: %s", resp.status_code, resp.text[:200])
             except requests.RequestException as exc:
-                logger.error("login failed: %s", exc)
+                logger.error("device auth failed: %s", exc)
+        else:
+            logger.error("DEVICE_ENROLLMENT_KEY is not set in client\\.env — agent cannot authenticate")
 
         return ""
 

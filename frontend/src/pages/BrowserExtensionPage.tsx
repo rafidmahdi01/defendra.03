@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import {
   Download,
   Chrome,
@@ -263,7 +263,7 @@ export default function BrowserExtensionPage() {
           <div className="text-sm">
             <div className="font-semibold text-[var(--warning)]">Privacy & Security Note</div>
             <p className="mt-1 text-xs text-[var(--warning)]/80">
-              This extension does not take automatic screenshots. Screen capture only occurs when you explicitly click "Capture screen" in the extension popup and grant permission. All events are stored locally first, then optionally sent to your local Defendra backend at 127.0.0.1:8000.
+              This extension does not take automatic screenshots. Screen capture only occurs when you explicitly click "Capture screen" in the extension popup and grant permission. All events are stored locally first, then optionally sent to your Defendra backend.
             </p>
           </div>
         </div>
@@ -318,3 +318,4 @@ function FeatureCard({
     </div>
   );
 }
+

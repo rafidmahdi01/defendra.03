@@ -20,7 +20,7 @@ import { useConnectivitySync } from "@/hooks/useConnectivitySync";
 import { formatRelative } from "@/hooks/useTelemetry";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useServiceConnected } from "@/hooks/useServiceConnected";
-import { api } from "@/services/api";
+import { api, API_URL } from "@/services/api";
 
 type PolicyKey =
   | "autoReconnectWifi"
@@ -298,7 +298,8 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!isAdmin || !connected) return;
-    const wsUrl = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000/ws/dashboard";
+    const defaultWsUrl = API_URL.startsWith("https") ? API_URL.replace(/^https/, "wss") + "/ws/dashboard" : API_URL.replace(/^http/, "ws") + "/ws/dashboard";
+    const wsUrl = import.meta.env.VITE_WS_URL || defaultWsUrl;
     const socket = new WebSocket(wsUrl);
     socket.onmessage = (message) => {
       try {
@@ -939,3 +940,4 @@ export function IntegrationsSettingsCard() {
     </GlassCard>
   );
 }
+

@@ -8,7 +8,8 @@ import {
 import { GlassCard } from "@/components/defendra/Card";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
-const RECOVERY_URL = "http://127.0.0.1:8001";
+const RECOVERY_URL =
+  (import.meta.env.VITE_RECOVERY_URL as string) || "http://127.0.0.1:8001";
 const recovery = axios.create({ baseURL: RECOVERY_URL, timeout: 15000 });
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -84,18 +85,34 @@ function normalizePathInput(raw: string): string {
   return p;
 }
 
-/** Get device ID from hostname (matches backend logic) */
+/** Get device ID from workstation storage or real domain, never loopback IP */
 function getDeviceId(): string {
   try {
-    // Use hostname as device identifier (sanitized)
-    const hostname = window.location.hostname || "unknown-device";
-    const sanitized = hostname
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "");
-    return sanitized || "unknown-device";
+    // 1. Check workstation device ID if linked via Electron or client agent
+    const wsDeviceId = localStorage.getItem("crps_workstation_device_id");
+    if (wsDeviceId && wsDeviceId.trim() && !wsDeviceId.toLowerCase().includes("127001")) {
+      return wsDeviceId.trim();
+    }
+    // 2. Hostname from window.location only if it's an actual machine domain/name, NOT loopback/localhost
+    const hostname = window.location.hostname || "";
+    if (
+      hostname &&
+      hostname !== "127.0.0.1" &&
+      hostname !== "localhost" &&
+      !hostname.startsWith("192.168.") &&
+      !hostname.startsWith("10.")
+    ) {
+      const sanitized = hostname
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+      if (sanitized && sanitized !== "127001" && sanitized !== "localhost") {
+        return sanitized;
+      }
+    }
+    return "";
   } catch {
-    return "unknown-device";
+    return "";
   }
 }
 
@@ -107,6 +124,7 @@ export default function BackupsPage() {
   
   // Connection to recovery service
   const [connected, setConnected] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState<{ device_id: string; hostname: string } | null>(null);
 
   // Backup list
   const [backups, setBackups] = useState<Backup[]>([]);
@@ -142,8 +160,29 @@ export default function BackupsPage() {
     try {
       await recovery.get("/health");
       setConnected(true);
+      try {
+        const info = await recovery.get<{ device_id: string; hostname: string }>("/backup/device-info");
+        if (info.data?.device_id) {
+          setDeviceInfo(info.data);
+        }
+      } catch {
+        /* optional device info */
+      }
     } catch {
-      setConnected(false);
+      try {
+        await axios.get("http://127.0.0.1:8001/health", { timeout: 3000 });
+        setConnected(true);
+        try {
+          const info = await axios.get<{ device_id: string; hostname: string }>("http://127.0.0.1:8001/backup/device-info", { timeout: 3000 });
+          if (info.data?.device_id) {
+            setDeviceInfo(info.data);
+          }
+        } catch {
+          /* optional */
+        }
+      } catch {
+        setConnected(false);
+      }
     }
   }, []);
 
@@ -157,14 +196,15 @@ export default function BackupsPage() {
       
       if (!isAdmin) {
         // For regular users, filter by BOTH device_id AND user_email
-        const deviceId = getDeviceId();
+        const effectiveDeviceId = deviceInfo?.device_id || getDeviceId();
         const userEmail = user.email;
         
-        if (deviceId && userEmail) {
-          url = `/backup/list?device_id=${deviceId}&user_email=${encodeURIComponent(userEmail)}`;
-        } else if (deviceId) {
-          // Fallback: filter by device only if email not available
-          url = `/backup/list?device_id=${deviceId}`;
+        if (effectiveDeviceId && userEmail) {
+          url = `/backup/list?device_id=${effectiveDeviceId}&user_email=${encodeURIComponent(userEmail)}`;
+        } else if (effectiveDeviceId) {
+          url = `/backup/list?device_id=${effectiveDeviceId}`;
+        } else if (userEmail) {
+          url = `/backup/list?user_email=${encodeURIComponent(userEmail)}`;
         }
       }
       // Admin: No filters, gets ALL backups
@@ -176,7 +216,7 @@ export default function BackupsPage() {
     } finally {
       setLoadingBackups(false);
     }
-  }, [connected, isAdmin, user.email]);
+  }, [connected, isAdmin, user.email, deviceInfo]);
 
   const fetchSchedule = useCallback(async () => {
     if (!connected) return;
@@ -227,10 +267,11 @@ export default function BackupsPage() {
     setBackupError("");
     const paths = manualPaths.filter((p) => p.trim()).map(normalizePathInput).filter((p) => p.length > 0);
     try {
+      const effectiveDeviceId = deviceInfo?.device_id || getDeviceId() || null;
       const { data } = await recovery.post<Backup>("/backup/create", {
         paths: paths.length ? paths : null,
         label: manualLabel || "manual",
-        device_id: getDeviceId(),
+        device_id: effectiveDeviceId,
         user_email: user.email,
       });
       setBackupResult(data);
@@ -277,7 +318,10 @@ export default function BackupsPage() {
     setRestoreResult(null);
     setRestoreError("");
     try {
-      const { data } = await recovery.post<RestoreResult>("/backup/restore", { backup_id });
+      const { data } = await recovery.post<RestoreResult>("/backup/restore", {
+        backup_id,
+        restore_to_original: true,
+      });
       setRestoreResult(data);
     } catch (e: any) {
       setRestoreError(e?.response?.data?.detail || "Restore failed.");
@@ -325,6 +369,11 @@ export default function BackupsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {deviceInfo?.device_id && (
+            <span className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-mono text-[var(--mint)]">
+              Device: {deviceInfo.device_id}
+            </span>
+          )}
           <span
             className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium ring-1"
             style={
@@ -447,6 +496,7 @@ export default function BackupsPage() {
               <div>
                 <span className="font-semibold">Backup complete!</span>{" "}
                 ID: <code className="font-mono">{backupResult.backup_id}</code> ·{" "}
+                Device: <code className="font-mono font-bold text-[var(--mint)]">{backupResult.device_id || deviceInfo?.device_id || "Auto"}</code> ·{" "}
                 {backupResult.file_count} file(s) · {fmt(backupResult.size_bytes)}
               </div>
             </div>
@@ -653,6 +703,7 @@ export default function BackupsPage() {
             <thead className="bg-white/5 text-[10px] uppercase tracking-wider text-muted-foreground">
               <tr>
                 <Th>Backup ID</Th>
+                <Th>Device</Th>
                 <Th>Label</Th>
                 <Th>Created</Th>
                 <Th>Files</Th>
@@ -664,7 +715,7 @@ export default function BackupsPage() {
             <tbody>
               {backups.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-10 text-center text-muted-foreground">
+                  <td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">
                     {connected ? "No backups yet. Create one above." : "Recovery service is offline."}
                   </td>
                 </tr>
@@ -675,6 +726,11 @@ export default function BackupsPage() {
                     <code className="font-mono text-[10px] text-[var(--cyan)]">
                       {b.backup_id.slice(0, 16)}…
                     </code>
+                  </Td>
+                  <Td>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-0.5 font-mono text-[10px] font-semibold text-[var(--mint)] ring-1 ring-white/10">
+                      {b.device_id || deviceInfo?.device_id || "default"}
+                    </span>
                   </Td>
                   <Td>
                     <span

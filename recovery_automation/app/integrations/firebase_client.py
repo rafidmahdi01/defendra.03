@@ -33,8 +33,42 @@ class FirebaseStorageClient:
     def enabled(self) -> bool:
         """Check if Firebase credentials are configured."""
         sa_json = self.settings.firebase_service_account_json.strip()
-        bucket = self.settings.firebase_storage_bucket.removeprefix("gs://").strip()
-        return bool(sa_json) and bool(bucket)
+        bucket = (
+            self.settings.firebase_storage_bucket
+            or "defendraai.firebasestorage.app"
+        ).removeprefix("gs://").strip()
+
+        has_sa = (
+            bool(sa_json and sa_json.startswith("{"))
+            or self._find_service_account_path(sa_json) is not None
+        )
+        return has_sa and bool(bucket)
+
+    def _find_service_account_path(self, source: str) -> Path | None:
+        """Find service account key file across common repository paths."""
+        candidates: list[Path] = []
+        if source:
+            candidates.append(Path(source))
+            module_dir = Path(__file__).resolve().parents[2]
+            candidates.append(module_dir / source)
+            candidates.append(module_dir.parent / source)
+            candidates.append(module_dir.parent / "backend" / source)
+
+        module_dir = Path(__file__).resolve().parents[2]
+        candidates.extend([
+            module_dir / "firebase-adminsdk.json",
+            module_dir.parent / "backend" / "firebase-adminsdk.json",
+            module_dir.parent / "firebase-adminsdk.json",
+        ])
+
+        for cand in candidates:
+            try:
+                resolved = cand.expanduser().resolve()
+                if resolved.is_file():
+                    return resolved
+            except Exception:
+                continue
+        return None
 
     def _get_bucket(self) -> Any:
         """Initialize Firebase Admin SDK and return bucket handle."""
@@ -53,6 +87,11 @@ class FirebaseStorageClient:
 
         # Avoid re-initializing if app already exists
         app_name = "defendra_user_backups"
+        bucket_name = (
+            self.settings.firebase_storage_bucket
+            or "defendraai.firebasestorage.app"
+        ).removeprefix("gs://").strip()
+
         try:
             existing_app = firebase_admin.get_app(app_name)
             logger.debug("Re-using existing Firebase app: %s", app_name)
@@ -60,7 +99,6 @@ class FirebaseStorageClient:
         except ValueError:
             # Initialize new app
             service_account_source = self.settings.firebase_service_account_json.strip()
-            bucket_name = self.settings.firebase_storage_bucket.removeprefix("gs://").strip()
 
             # Load credentials from file or raw JSON
             if service_account_source.startswith("{"):
@@ -73,9 +111,9 @@ class FirebaseStorageClient:
                     logger.error("Firebase: invalid JSON: %s", e)
                     return None
             else:
-                sa_path = Path(service_account_source).expanduser().resolve()
-                if not sa_path.exists():
-                    logger.error("Firebase: service account key not found: %s", sa_path)
+                sa_path = self._find_service_account_path(service_account_source)
+                if not sa_path:
+                    logger.error("Firebase: service account key not found: %s", service_account_source)
                     return None
                 cred = credentials.Certificate(str(sa_path))
                 logger.info("Firebase: loaded credentials from file: %s", sa_path)
@@ -93,7 +131,7 @@ class FirebaseStorageClient:
 
         try:
             from firebase_admin import storage as fb_storage  # type: ignore[import-untyped]
-            self._bucket = fb_storage.bucket(app=self._firebase_app)
+            self._bucket = fb_storage.bucket(name=bucket_name, app=self._firebase_app)
             return self._bucket
         except Exception as e:
             logger.error("Failed to get Firebase Storage bucket: %s", e)

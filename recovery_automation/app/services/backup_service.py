@@ -13,7 +13,7 @@ from typing import Any
 
 from app.integrations.firebase_client import FirebaseStorageClient
 from app.integrations.firebase_storage import FirebaseBackupClient
-from app.utils.config import get_settings
+from app.utils.config import MODULE_ROOT, get_settings
 from app.utils.helper import (
     archive_path,
     generate_backup_id,
@@ -197,16 +197,34 @@ class BackupService:
     def _get_device_id(self, provided_device_id: str | None = None) -> str:
         """
         Get device ID for backup. Priority:
-        1. Explicitly provided device_id (from request)
-        2. Auto-detected from system hostname
+        1. Explicitly provided device_id (if not localhost or loopback 127001)
+        2. Client registered device_id from client/data/device_id.txt
+        3. Auto-detected from system hostname (e.g. rafooood)
         
         Returns sanitized device_id suitable for storage paths.
         """
         if provided_device_id and provided_device_id.strip():
-            device_id = provided_device_id.strip()
-            logger.info("Using provided device_id: %s", device_id)
-            return device_id
-        
+            clean_id = provided_device_id.strip()
+            # If the caller passed localhost/loopback representations, discard them
+            if clean_id.lower() not in ("127001", "127-0-0-1", "127.0.0.1", "localhost", "unknown-device", "unknown"):
+                logger.info("Using provided device_id: %s", clean_id)
+                return clean_id
+
+        # Check client registered device ID
+        for candidate in [
+            MODULE_ROOT.parent / "client" / "data" / "device_id.txt",
+            MODULE_ROOT / "data" / "device_id.txt",
+            Path("client/data/device_id.txt"),
+        ]:
+            if candidate.exists():
+                try:
+                    stored_id = candidate.read_text(encoding="utf-8").strip()
+                    if stored_id and stored_id.lower() not in ("127001", "127.0.0.1", "localhost"):
+                        logger.info("Using client registered device_id: %s", stored_id)
+                        return stored_id
+                except Exception:
+                    pass
+
         # Auto-detect from system hostname
         hostname = platform.node() or "unknown-device"
         # Sanitize: replace spaces and special chars with hyphens
@@ -215,7 +233,7 @@ class BackupService:
         device_id = "".join(c if c.isalnum() or c == "-" else "" for c in device_id)
         
         logger.info("Auto-detected device_id from hostname: %s (original: %s)", device_id, hostname)
-        return device_id
+        return device_id or "default-device"
 
     def create_backup(
         self,

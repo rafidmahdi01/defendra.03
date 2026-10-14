@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
+import { API_URL } from "../services/api";
 
-const WS_URL = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000/ws/dashboard";
+const defaultWsUrl = API_URL.startsWith("https")
+  ? API_URL.replace(/^https/, "wss") + "/ws/dashboard"
+  : API_URL.replace(/^http/, "ws") + "/ws/dashboard";
+
+const WS_URL = import.meta.env.VITE_WS_URL || defaultWsUrl;
 
 export function useRealtime(onEvent) {
   const [connected, setConnected] = useState(false);
@@ -20,3 +25,4 @@ export function useRealtime(onEvent) {
 
   return { connected, events };
 }
+

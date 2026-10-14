@@ -31,11 +31,11 @@ class Settings(BaseSettings):
 
     # Defendra API integration
     defendra_api_url: str = Field(
-        default="http://127.0.0.1:8000", alias="DEFENDRA_API_URL"
+        default="https://api.technohavenmalaysia.com", alias="DEFENDRA_API_URL"
     )
     defendra_api_token: str = Field(default="", alias="DEFENDRA_API_TOKEN")
-    defendra_api_email: str = Field(default="", alias="DEFENDRA_API_EMAIL")
-    defendra_api_password: str = Field(default="", alias="DEFENDRA_API_PASSWORD")
+    # Machine credential; must match DEVICE_ENROLLMENT_KEY on the backend.
+    device_enrollment_key: str = Field(default="", alias="DEVICE_ENROLLMENT_KEY")
 
     # Backup
     backup_root: str = Field(default="backups", alias="BACKUP_ROOT")
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     backup_retention_days: int = Field(default=30, alias="BACKUP_RETENTION_DAYS")
 
     # JWT (must match main Defendra API settings)
-    jwt_secret_key: str = Field(default="your-secret-key-change-in-production", alias="JWT_SECRET_KEY")
+    jwt_secret_key: str = Field(default="9af99c43b10381bba5630ca7d61c11ebbf945b19fcf0371f6b695ade0ab6e3d1", alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
 
     # Firebase Cloud Storage

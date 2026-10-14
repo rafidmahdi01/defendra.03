@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const optionsBtn = document.getElementById('options');
 
   const cfg = await chrome.storage.local.get('defendra_backend_url');
-  backendInput.value = cfg.defendra_backend_url || 'http://127.0.0.1:8000/api/logs';
+  backendInput.value = cfg.defendra_backend_url || 'https://api.technohavenmalaysia.com/api/logs';
 
   saveBtn.addEventListener('click', async () => {
     await chrome.storage.local.set({ defendra_backend_url: backendInput.value });
@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       ctx.drawImage(bitmap, 0, 0);
       track.stop();
       const dataUrl = canvas.toDataURL('image/png');
-      const url = (await chrome.storage.local.get('defendra_backend_url')).defendra_backend_url || 'http://127.0.0.1:8000/api/logs';
+      const url = (await chrome.storage.local.get('defendra_backend_url')).defendra_backend_url || 'https://api.technohavenmalaysia.com/api/logs';
       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: 'browser-screenshot', message: 'user-screenshot', raw_payload: { image: dataUrl.slice(0, 2000) } }) });
       alert('Screenshot sent (truncated for demo).');
     } catch (e) {

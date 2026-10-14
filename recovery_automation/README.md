@@ -36,8 +36,7 @@ recovery_automation/
 ## Prerequisites
 
 - **Defendra backend** running at `http://127.0.0.1:8000`
-- Python 3.11+
-- Valid Defendra credentials (`DEFENDRA_API_EMAIL` / `DEFENDRA_API_PASSWORD`) for alert APIs
+- Valid machine enrollment key (`DEVICE_ENROLLMENT_KEY`) matching Defendra backend
 
 ## Quick Start
 

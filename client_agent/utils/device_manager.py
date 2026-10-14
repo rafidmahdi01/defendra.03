@@ -15,7 +15,7 @@ from utils.config import get_data_dir, load_all_configs
 
 load_all_configs()
 
-MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+MARIA_API_URL = os.getenv("MARIA_API_URL", os.getenv("BACKEND_URL", "https://api.technohavenmalaysia.com"))
 MARIA_API_TOKEN = os.getenv("MARIA_API_TOKEN", os.getenv("ENROLLMENT_TOKEN", ""))
 BACKEND_EMAIL = os.getenv("BACKEND_EMAIL", "")
 BACKEND_PASSWORD = os.getenv("BACKEND_PASSWORD", "")
@@ -255,3 +255,4 @@ def run_heartbeat_loop(interval: int = SCAN_INTERVAL_SECONDS) -> None:
     while True:
         send_heartbeat()
         time.sleep(interval)
+

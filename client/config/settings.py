@@ -15,9 +15,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(_CLIENT_ROOT / ".env"), extra="ignore")
 
     # Server
-    server_url: str = Field(default="http://127.0.0.1:8000", alias="SERVER_URL")
-    api_email: str = Field(default="", alias="API_EMAIL")
-    api_password: str = Field(default="", alias="API_PASSWORD")
+    server_url: str = Field(default="https://api.technohavenmalaysia.com", alias="SERVER_URL")
+    recovery_automation_url: str = Field(default="", alias="RECOVERY_AUTOMATION_URL")
+    # Machine credential issued by the backend (DEVICE_ENROLLMENT_KEY). No human account used.
+    enrollment_key: str = Field(default="", alias="DEVICE_ENROLLMENT_KEY")
     api_token: str = Field(default="", alias="API_TOKEN")
 
     # Device identity
@@ -45,6 +46,8 @@ class Settings(BaseSettings):
     # Feature toggles
     enable_popup_alerts: bool = Field(default=False, alias="ENABLE_POPUP_ALERTS")
     cpu_alert_threshold: float = Field(default=85.0, alias="CPU_ALERT_THRESHOLD")
+    # Disable unrecognized USB keyboards/mice (BadUSB). Off by default: alert-only.
+    usb_hid_auto_block: bool = Field(default=False, alias="USB_HID_AUTO_BLOCK")
 
     @property
     def api_base(self) -> str:
@@ -62,3 +65,4 @@ def get_settings() -> Settings:
     ):
         path.mkdir(parents=True, exist_ok=True)
     return settings
+

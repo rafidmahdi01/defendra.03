@@ -1,4 +1,4 @@
-"""
+r"""
 Test script: Verify Firebase backup upload integration (standalone).
 
 This test directly creates a backup and verifies Firebase upload works.

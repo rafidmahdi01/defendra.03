@@ -47,6 +47,20 @@ def create_backup(payload: BackupCreateRequest) -> dict:
         ) from exc
 
 
+@router.get("/device-info", response_model=dict)
+def get_device_info() -> dict:
+    """
+    Return the current device identifier and machine hostname.
+    """
+    import platform
+    dev_id = _backup._get_device_id()
+    hostname = platform.node() or "unknown-device"
+    return {
+        "device_id": dev_id,
+        "hostname": hostname,
+    }
+
+
 @router.get("/list", response_model=list)
 def list_backups(
     device_id: str | None = None,
@@ -89,14 +103,18 @@ def restore_backup(payload: BackupRestoreRequest) -> dict:
     """
     try:
         if payload.backup_id:
-            logger.info("Restoring backup %s", payload.backup_id)
+            logger.info("Restoring backup %s (restore_to_original=%s)", payload.backup_id, payload.restore_to_original)
             return _restore.restore_backup(
                 payload.backup_id,
                 target_dir=payload.target_dir,
+                restore_to_original=payload.restore_to_original,
             )
         
-        logger.info("Restoring latest backup")
-        return _restore.restore_latest(target_dir=payload.target_dir)
+        logger.info("Restoring latest backup (restore_to_original=%s)", payload.restore_to_original)
+        return _restore.restore_latest(
+            target_dir=payload.target_dir,
+            restore_to_original=payload.restore_to_original,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:

@@ -283,6 +283,34 @@ def start_background_monitors():
         logger.info(f"Started scanner thread: {t.name}")
 
 
+def create_spa_bottle_app(ui_dir: Path):
+    """
+    Wrap local React Single-Page Application (SPA) in a Bottle server
+    with client-side routing fallback so non-asset routes (like /login)
+    always serve index.html instead of returning 404 Not Found.
+    """
+    import bottle
+
+    app = bottle.Bottle()
+
+    @app.route('/<file:path>')
+    def serve_file(file):
+        target = ui_dir / file
+        if target.is_file():
+            bottle.response.set_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            return bottle.static_file(file, root=str(ui_dir))
+        # Client-side SPA fallback
+        bottle.response.set_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        return bottle.static_file('index.html', root=str(ui_dir))
+
+    @app.route('/')
+    def serve_index():
+        bottle.response.set_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        return bottle.static_file('index.html', root=str(ui_dir))
+
+    return app
+
+
 def main():
     global window, tray_icon
 
@@ -307,9 +335,16 @@ def main():
     ui_target = resolve_ui_target()
     logger.info(f"Opening native local dashboard UI: {ui_target}")
 
+    target_path = Path(ui_target)
+    if target_path.exists():
+        ui_dir = target_path.parent if target_path.is_file() else target_path
+        app_target = create_spa_bottle_app(ui_dir)
+    else:
+        app_target = ui_target
+
     window = webview.create_window(
         title="Defendra.AI - Enterprise Endpoint Protection",
-        url=ui_target,
+        url=app_target,
         width=1280,
         height=800,
         min_size=(900, 600),
