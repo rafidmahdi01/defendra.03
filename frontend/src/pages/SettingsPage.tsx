@@ -201,35 +201,13 @@ export default function SettingsPage() {
   }, [connected, isAdmin, selectedUserId]);
 
   const loadManagedUsers = useCallback(async () => {
-    if (!isAdmin || !connected) {
-      console.log('[SettingsPage] Skipping loadManagedUsers - isAdmin:', isAdmin, 'connected:', connected);
-      return;
-    }
+    if (!isAdmin || !connected) return;
     try {
-      console.log('[SettingsPage] Loading managed users...');
-      const response = await api.get<ManagedUser[]>('/auth/users');
-      console.log('[SettingsPage] Raw response:', response);
-      console.log('[SettingsPage] Response data:', response.data);
-      console.log('[SettingsPage] Response data type:', typeof response.data);
-      console.log('[SettingsPage] Is array?', Array.isArray(response.data));
-      
-      const { data } = response;
+      const { data } = await api.get<ManagedUser[]>('/auth/users');
       const users = Array.isArray(data) ? data : [];
-      console.log('[SettingsPage] Processed users array:', users);
-      console.log('[SettingsPage] Users count:', users.length);
-      if (users.length > 0) {
-        console.log('[SettingsPage] First user:', users[0]);
-      }
-      
       setManagedUsers(users);
       setSelectedUserId((current) => current || users[0]?.id || "");
-    } catch (error: unknown) {
-      console.error('[SettingsPage] Error loading managed users:', error);
-      if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as { response?: { data?: unknown } };
-        console.error('[SettingsPage] Error response:', axiosError.response);
-        console.error('[SettingsPage] Error response data:', axiosError.response?.data);
-      }
+    } catch {
       setManagedUsers([]);
       setSelectedUserId("");
     }
@@ -292,19 +270,9 @@ export default function SettingsPage() {
   }, [isAdmin, refreshAdminActivity]);
 
   useEffect(() => {
-    console.log('[SettingsPage] useEffect for loadManagedUsers - isAdmin:', isAdmin, 'connected:', connected);
-    console.log('[SettingsPage] Current user from localStorage:', localStorage.getItem('crps_user'));
-    console.log('[SettingsPage] Current token from localStorage:', localStorage.getItem('crps_token') ? 'Token exists' : 'No token');
-    if (!isAdmin) {
-      console.warn('[SettingsPage] User is not admin, cannot load users');
-      return;
-    }
-    if (!connected) {
-      console.warn('[SettingsPage] Backend not connected, cannot load users');
-      return;
-    }
+    if (!isAdmin || !connected) return;
     loadManagedUsers();
-  }, [isAdmin, loadManagedUsers]);
+  }, [isAdmin, connected, loadManagedUsers]);
 
   useEffect(() => {
     if (!isAdmin) return;
